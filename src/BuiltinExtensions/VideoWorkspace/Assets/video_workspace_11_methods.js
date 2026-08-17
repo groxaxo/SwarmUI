@@ -19,6 +19,8 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             let row = createDiv(null, `video-workspace-job video-workspace-job-${job.status}`);
             row.dataset.jobId = job.id;
             let selected = this.selectedJobs.has(job.id) ? ' checked' : '';
+            let active = ['running', 'submitting'].includes(job.status);
+            let activeDisabled = active ? ' disabled' : '';
             let backendOptions = '<option value="auto">Auto scheduler</option>' + backends.map(backend => `<option value="${escapeHtml(backend.value)}"${job.backend == backend.value ? ' selected' : ''}>${escapeHtml(backend.name)}</option>`).join('');
             let clipOptions = '<option value="default">Backend default</option>' + clipDevices.map(device => `<option value="${escapeHtml(device)}"${job.clipDevice == device ? ' selected' : ''}>${escapeHtml(device)}</option>`).join('');
             let outputLinks = (job.outputs || []).slice(-3).map(output => `<a href="${escapeHtmlForUrl(output)}" target="_blank">${escapeHtml(getImageFullSrc(output).split('/').pop())}</a>`).join('');
@@ -41,10 +43,10 @@ Object.assign(VideoWorkspaceHelper.prototype, {
                 <div class="video-workspace-job-actions">
                     <button class="basic-button" data-action="edit">Load / Edit</button>
                     <button class="basic-button" data-action="duplicate">Duplicate</button>
-                    <button class="basic-button" data-action="retry">Queue</button>
-                    <button class="basic-button" data-action="up"${index == 0 ? ' disabled' : ''}>↑</button>
-                    <button class="basic-button" data-action="down"${index == this.queue.length - 1 ? ' disabled' : ''}>↓</button>
-                    <button class="basic-button danger-button" data-action="delete">Delete</button>
+                    <button class="basic-button" data-action="retry"${activeDisabled}>Queue</button>
+                    <button class="basic-button" data-action="up"${activeDisabled || (index == 0 ? ' disabled' : '')}>↑</button>
+                    <button class="basic-button" data-action="down"${activeDisabled || (index == this.queue.length - 1 ? ' disabled' : '')}>↓</button>
+                    <button class="basic-button danger-button" data-action="delete"${activeDisabled}>Delete</button>
                 </div>`;
             row.addEventListener('change', event => this.handleJobChange(job, event));
             row.addEventListener('click', event => this.handleJobClick(job, event));

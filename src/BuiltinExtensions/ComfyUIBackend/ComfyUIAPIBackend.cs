@@ -176,6 +176,7 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
                 ResolvedUseAPIPrefix = ResolveUseAPIPrefix().GetAwaiter().GetResult();
                 if (prior != ResolvedUseAPIPrefix)
                 {
+                    ClearSockets().GetAwaiter().GetResult();
                     Logs.Debug($"ComfyUI API backend {BackendData.ID} changed auto-detected route style to {RouteLabel()} while reconnecting.");
                 }
             }

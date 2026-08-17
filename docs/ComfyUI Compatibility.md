@@ -1,42 +1,38 @@
 # Ubuntu acceptance runbook: ComfyUI 0.33.0
 
-This runbook is the release gate for SwarmUI interoperability with **ComfyUI 0.33.0** on Ubuntu and three NVIDIA GPUs. It is an execution procedure, not a claim that testing has already happened.
+This is the release gate for SwarmUI interoperability with **ComfyUI 0.33.0** on Ubuntu and three NVIDIA GPUs. It is an execution procedure, not a claim that the tests have already run.
 
-ComfyUI 0.33.0 serves its native HTTP and WebSocket interface at root paths such as `/system_stats`, `/object_info`, `/prompt`, `/queue`, `/interrupt`, `/history`, `/view`, and `/ws`. A frontend development server or reverse proxy may expose the same interface below `/api`. The frontend package required by the 0.33.0 release is exactly `comfyui-frontend-package==1.48.7`.
+ComfyUI 0.33.0 serves its native HTTP and WebSocket interface at root paths such as `/system_stats`, `/object_info`, `/prompt`, `/queue`, `/interrupt`, `/history`, `/view`, and `/ws`. A frontend development server or reverse proxy may expose the same interface below `/api`. The exact frontend package for this release is `comfyui-frontend-package==1.48.7`.
 
-## Acceptance rule
+## Acceptance contract
 
-A release candidate passes only when every mandatory test ID below appears exactly once as `PASS` in `99-summary/results.tsv`, with the named evidence present in the evidence bundle.
+A candidate passes only when every mandatory ID below occurs exactly once as `PASS` in `99-summary/results.tsv`, with all named evidence present. `FAIL`, `BLOCKED`, missing evidence, or an unexecuted test is not acceptable for release.
 
-- `PASS`: every stated pass condition was observed and captured.
-- `FAIL`: at least one fail condition was observed.
-- `BLOCKED`: an external prerequisite prevented execution. `BLOCKED` is not acceptable for release.
+| ID | Scope |
+| --- | --- |
+| `S00` | Host and source identity |
+| `S01` | Repository scan, diff validation, and Release build |
+| `D01` | Exact ComfyUI release and dependency baseline |
+| `D02` | Self-start dependency repair and protected-package validation |
+| `B01` | Self-start backend on GPU 0 |
+| `B02` | Self-start backend on GPU 1 |
+| `B03` | Self-start backend on GPU 2 |
+| `B04` | Three simultaneous jobs, one backend per physical GPU |
+| `R01` | Native root-route auto-detection |
+| `R02` | Live `/api` auto-detection |
+| `R03` | Offline-start `/api` recovery |
+| `R04` | Forced root fallback and blank-address disable behaviour |
+| `G01` | Generate tab through root routes |
+| `G02` | Generate tab through `/api` routes |
+| `C01` | Comfy Workflow generation from both entry points |
+| `W01` | WebSocket upgrade and live previews |
+| `W02` | Cancellation, cleanup, and recovery |
+| `H01` | Final outputs and history lifecycle |
+| `M01` | Model-path YAML and text-encoder discovery |
 
-Do not place credentials, cookies, access tokens, private prompts, or private model metadata in the evidence bundle.
+Do not place credentials, cookies, tokens, private prompts, or private model metadata in the evidence bundle.
 
-| ID | Mandatory | Scope |
-| --- | --- | --- |
-| `S00` | Yes | Host and source identity |
-| `S01` | Yes | Repository scan, diff validation, and Release build |
-| `D01` | Yes | Exact ComfyUI tag and dependency baseline |
-| `D02` | Yes | Self-start dependency repair and protected-package validation |
-| `B01` | Yes | Self-start backend on GPU 0 |
-| `B02` | Yes | Self-start backend on GPU 1 |
-| `B03` | Yes | Self-start backend on GPU 2 |
-| `B04` | Yes | Three simultaneous jobs, one backend per GPU |
-| `R01` | Yes | Native root-route auto-detection |
-| `R02` | Yes | Live `/api` auto-detection |
-| `R03` | Yes | Offline-start `/api` recovery |
-| `R04` | Yes | Forced root/legacy-compatible fallback |
-| `G01` | Yes | Generate tab through root routes |
-| `G02` | Yes | Generate tab through `/api` routes |
-| `C01` | Yes | Comfy Workflow generation from both entry points |
-| `W01` | Yes | WebSocket upgrade and live previews |
-| `W02` | Yes | Cancellation, cleanup, and recovery |
-| `H01` | Yes | Outputs and history |
-| `M01` | Yes | Model-path YAML and text-encoder discovery |
-
-## 1. Prepare Ubuntu and the evidence directory
+## 1. Prepare Ubuntu and the evidence bundle
 
 Run in Bash as the same user that will run SwarmUI and ComfyUI.
 
@@ -46,7 +42,7 @@ set -Eeuo pipefail
 sudo apt-get update
 sudo apt-get install -y \
   bsdextrautils ca-certificates curl file git jq lsb-release nginx \
-  python3 python3-pip python3-venv tmux unzip
+  python3 python3-pip python3-venv tcpdump tmux unzip
 
 export SWARM_REPO="$HOME/src/SwarmUI"
 export COMFY_REPO="$HOME/src/ComfyUI-0.33.0"
@@ -68,7 +64,55 @@ export PS4='+ $(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) ${BASH_SOURCE}:${LINENO}: '
 set -x
 ```
 
-All subsequent shell commands and output are now appended to `terminal.log` without moving into a child shell.
+Create one reusable process-discovery helper. It resolves a relative `main.py` against each process working directory, not against the shell's current directory.
+
+```bash
+cat > "$EV/discover_comfy.py" <<'PY'
+from pathlib import Path
+import sys
+
+script = Path(sys.argv[1]).resolve()
+rows = []
+for proc in Path("/proc").glob("[0-9]*"):
+    try:
+        args = [x.decode() for x in (proc / "cmdline").read_bytes().split(b"\0") if x]
+        cwd = (proc / "cwd").resolve()
+        if cwd != script.parent or not any(Path(arg).name == script.name for arg in args):
+            continue
+        env = {}
+        for item in (proc / "environ").read_bytes().split(b"\0"):
+            if b"=" in item:
+                key, value = item.split(b"=", 1)
+                env[key.decode()] = value.decode()
+        gpu = env.get("CUDA_VISIBLE_DEVICES", "")
+        port = args[args.index("--port") + 1]
+        rows.append((f"comfy033-gpu{gpu}", gpu, int(proc.name), int(port)))
+    except (FileNotFoundError, PermissionError, ValueError, UnicodeDecodeError):
+        pass
+rows.sort(key=lambda row: row[1])
+print("name\tgpu\tpid\tport")
+for row in rows:
+    print("\t".join(map(str, row)))
+PY
+
+cat > "$EV/validate_proxy_log.py" <<'PY'
+from pathlib import Path
+import re, sys
+
+pattern = re.compile(r'"([A-Z]+) ([^ ]+) HTTP/[^\"]+" ([0-9]{3}) ')
+seen = 0
+for line in Path(sys.argv[1]).read_text().splitlines():
+    match = pattern.search(line)
+    if not match:
+        continue
+    seen += 1
+    _method, path, status = match.groups()
+    if (status == "101" or status.startswith("2")) and not path.startswith("/api/"):
+        raise AssertionError(f"Successful API request lost prefix: {line}")
+assert seen, "Proxy access log contained no parseable requests"
+print("SUCCESSFUL_REQUEST_PREFIXES=PASS")
+PY
+```
 
 ## 2. Source and build gates
 
@@ -96,28 +140,21 @@ git show -s --format=fuller HEAD | tee "$EV/00-host/swarm-commit.txt"
 
 test ! -s "$EV/00-host/swarm-status.txt"
 test "$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)" -ge 3
-nvidia-smi --query-gpu=index --format=csv,noheader \
-  | sed 's/[[:space:]]//g' \
-  | grep -Fx 0
-nvidia-smi --query-gpu=index --format=csv,noheader \
-  | sed 's/[[:space:]]//g' \
-  | grep -Fx 1
-nvidia-smi --query-gpu=index --format=csv,noheader \
-  | sed 's/[[:space:]]//g' \
-  | grep -Fx 2
+for index in 0 1 2; do
+  nvidia-smi --query-gpu=index --format=csv,noheader \
+    | tr -d ' ' | grep -Fx "$index"
+done
 
 record_result S00 PASS \
   "00-host/host.txt; 00-host/swarm-head.txt; 00-host/swarm-status.txt" \
-  "Clean committed source; GPUs 0, 1, and 2 are visible"
+  "Clean committed source; physical GPUs 0, 1, and 2 are visible"
 ```
 
-**Pass:** the exact commit is recorded, the worktree is clean, and physical GPU indices 0, 1, and 2 have stable UUIDs.
-
-**Fail:** an unidentified or dirty source tree, fewer than three GPUs, duplicate indices, or an NVIDIA driver error.
+**Fail:** dirty or unidentified source, fewer than three GPUs, duplicate indices, or an NVIDIA driver error.
 
 ### S01 — removed policy material, diff integrity, and Release build
 
-For a pull-request head, use its target branch as `BASE_REF`. For an already-merged squash commit, use its first parent.
+For a pull-request head use its target branch as `BASE_REF`. For an already-merged squash commit use its first parent.
 
 ```bash
 cd "$SWARM_REPO"
@@ -151,30 +188,28 @@ fi
 ! grep -Ei '(^|[[:space:]])error[[:space:]]+[A-Z]{2,}[0-9]+:' \
   "$EV/10-build/release-build.txt"
 
-CHANGED_CS="$EV/10-build/changed-cs.txt"
-git diff --name-only "$BASE_REF"...HEAD -- '*.cs' | tee "$CHANGED_CS"
+git diff --name-only "$BASE_REF"...HEAD -- '*.cs' \
+  | tee "$EV/10-build/changed-cs.txt"
 while IFS= read -r source_file; do
   test -z "$source_file" && continue
   if grep -F "$source_file" "$EV/10-build/release-build.txt" | grep -i warning; then
     echo "Build warning in changed source: $source_file" >&2
     false
   fi
-done < "$CHANGED_CS"
+done < "$EV/10-build/changed-cs.txt"
 
 record_result S01 PASS \
   "10-build/diff-check.txt; 10-build/disallowed-doc-text.txt; 10-build/release-build.txt; 10-build/changed-cs.txt" \
   "Repository scan and diff are clean; Release build succeeds without warnings in changed source"
 ```
 
-**Pass:** the removed files are absent, the documentation scan is empty, `git diff --check` is empty, and the Release build exits zero without a warning attributed to changed C# source.
+**Fail:** stale policy text, a whitespace error, compiler failure, or a warning in changed C# source.
 
-**Fail:** stale policy text, a whitespace error, a compiler error, or a warning in changed source.
+## 3. Exact ComfyUI release and dependencies
 
-## 3. Install and validate exact ComfyUI 0.33.0
+### D01 — baseline
 
-### D01 — release and dependency baseline
-
-Use a dedicated checkout with `venv` beside `main.py`; this is the Ubuntu layout SwarmUI detects.
+Use a dedicated checkout whose `venv` directory is beside `main.py`.
 
 ```bash
 if test ! -e "$COMFY_REPO"; then
@@ -205,7 +240,7 @@ import sys
 
 namespace = {}
 exec((Path.cwd() / "comfyui_version.py").read_text(), namespace)
-assert namespace["__version__"] == "0.33.0", namespace["__version__"]
+assert namespace["__version__"] == "0.33.0"
 
 exact = {
     "comfyui-frontend-package": "1.48.7",
@@ -231,24 +266,20 @@ modules = [
     "sqlalchemy", "av", "kornia", "spandrel", "pydantic",
     "pydantic_settings", "comfy_kitchen", "comfy_aimdo",
 ]
-
 for package, wanted in exact.items():
     got = version(package)
     assert got == wanted, f"{package}: expected {wanted}, got {got}"
     print(f"EXACT {package}={got}")
-
 for package, floor in minimum.items():
     got = version(package)
     assert Version(got) >= Version(floor), f"{package}: expected >= {floor}, got {got}"
-    print(f"MINIMUM {package}={got} >= {floor}")
-
+    print(f"MINIMUM {package}={got}")
 assert Version(version("pydantic")).major == 2
 assert Version(version("pydantic-settings")).major == 2
 for module in modules:
     import_module(module)
     print(f"IMPORT {module}=OK")
-
-assert sys.executable.endswith("/venv/bin/python3"), sys.executable
+assert sys.executable.endswith("/venv/bin/python3")
 print("COMFYUI_VERSION=0.33.0")
 print(f"PYTHON={sys.executable}")
 PY
@@ -265,16 +296,14 @@ PY
 
 record_result D01 PASS \
   "20-deps/comfy-head.txt; 20-deps/baseline-verification.txt; 20-deps/pip-check-before.txt; 20-deps/pip-freeze-before.txt; 20-deps/torch.txt" \
-  "Official v0.33.0 checkout, exact frontend 1.48.7, valid imports, clean dependencies, CUDA available"
+  "Official v0.33.0 checkout, frontend 1.48.7, valid imports, clean dependencies, CUDA available"
 ```
 
-**Pass:** the exact tag is `v0.33.0`, frontend is exactly `1.48.7`, every import succeeds, dependency floors are satisfied, `pip check` is clean, and CUDA exposes at least three GPUs.
+**Fail:** wrong tag or frontend, missing import, dependency conflict, CPU-only Torch, or fewer than three GPUs.
 
-**Fail:** a moving branch, different frontend, missing import, dependency conflict, CPU-only Torch, or fewer than three visible GPUs.
+## 4. Model fixture and SwarmUI startup
 
-## 4. Select the model fixture
-
-Use one legitimate SDXL checkpoint already available on the test host. Do not silently download a model during acceptance.
+Use one legitimate SDXL checkpoint already present on the host.
 
 ```bash
 export TEST_CHECKPOINT_ABS="/absolute/path/to/test-sdxl-checkpoint.safetensors"
@@ -286,34 +315,27 @@ test -d "$MODEL_ROOT"
 test -e "$MODEL_ROOT/Stable-Diffusion/$TEST_CHECKPOINT_REL"
 file "$TEST_CHECKPOINT_ABS" | tee "$EV/00-host/checkpoint-file.txt"
 sha256sum "$TEST_CHECKPOINT_ABS" | tee "$EV/00-host/checkpoint-sha256.txt"
-```
 
-Configure `MODEL_ROOT` under **Server → Server Configuration → Paths**, refresh models, and confirm `TEST_CHECKPOINT_REL` is selectable.
-
-## 5. Start SwarmUI and retain its complete log
-
-```bash
 cd "$SWARM_REPO"
 tmux kill-session -t swarm033 2>/dev/null || true
 tmux new-session -d -s swarm033 \
   "cd '$SWARM_REPO' && ./launch-linux.sh 2>&1 | tee '$EV/10-build/swarm-runtime.log'"
-
 timeout 180 bash -c '
   until curl -fsS http://127.0.0.1:7801/ >/dev/null; do sleep 1; done
 '
 curl -fsS -o "$EV/10-build/swarm-index.html" http://127.0.0.1:7801/
 ```
 
-Keep this process running until all tests finish. Screenshots must retain backend status, request progress, and output metadata.
+Configure `MODEL_ROOT` under **Server → Server Configuration → Paths**, refresh models, and confirm `TEST_CHECKPOINT_REL` is selectable.
 
-## 6. Self-start and dependency repair
+## 5. Self-start and dependency repair
 
 Create one **ComfyUI Self-Starting** backend:
 
 | Field | Value |
 | --- | --- |
 | Name | `comfy033-gpu0` |
-| Start Script | absolute path to `$COMFY_REPO/main.py` |
+| Start Script | absolute `$COMFY_REPO/main.py` |
 | Extra Args | empty |
 | Disable Internal Args | off |
 | Auto Update | disabled |
@@ -324,11 +346,11 @@ Create one **ComfyUI Self-Starting** backend:
 | OverQueue | `1` |
 | Auto Restart | off |
 
-Keep every other ComfyUI backend stopped until `D02` finishes so only one process can modify the shared virtual environment.
+Keep all other ComfyUI backends stopped until `D02` finishes.
 
 ### D02 — controlled repair
 
-Start `comfy033-gpu0` once and confirm it reaches `Running`, then stop it. Capture protected versions, remove only `einops`, and prove the import is absent.
+Start `comfy033-gpu0` once, confirm `Running`, and stop it. Then:
 
 ```bash
 "$COMFY_PY" - <<'PY' > "$EV/20-deps/protected-before.json"
@@ -346,7 +368,7 @@ if "$COMFY_PY" -c 'import einops' 2> "$EV/20-deps/einops-missing.txt"; then
 fi
 ```
 
-Start `comfy033-gpu0` in SwarmUI and wait for `Running`, then run:
+Start `comfy033-gpu0` and wait for `Running`, then:
 
 ```bash
 "$COMFY_PY" -c 'import einops; print(einops.__version__)' \
@@ -354,8 +376,7 @@ Start `comfy033-gpu0` in SwarmUI and wait for `Running`, then run:
 "$COMFY_PY" -m pip check | tee "$EV/20-deps/pip-check-after.txt"
 "$COMFY_PY" -m pip freeze | sort > "$EV/20-deps/pip-freeze-after.txt"
 
-"$COMFY_PY" - <<'PY' \
-  "$EV/20-deps/protected-before.json" \
+"$COMFY_PY" - <<'PY' "$EV/20-deps/protected-before.json" \
   | tee "$EV/20-deps/protected-after.txt"
 from importlib.metadata import version
 import json, sys
@@ -390,19 +411,17 @@ grep -Ei "Installing 'einops'|validate required libs" \
 test -s "$EV/20-deps/swarm-repair-log.txt"
 ```
 
-Save `20-deps/D02-running.png` showing the backend in `Running`, then record:
+Save `20-deps/D02-running.png`, then:
 
 ```bash
 record_result D02 PASS \
   "20-deps/remove-einops.txt; 20-deps/einops-after-self-start.txt; 20-deps/pip-check-after.txt; 20-deps/protected-after.txt; 20-deps/package-delta.txt; 20-deps/python-selection.txt; 20-deps/swarm-repair-log.txt; 20-deps/D02-running.png" \
-  "Self-start used the dedicated venv, restored einops, retained frontend 1.48.7, and did not alter the protected CUDA stack"
+  "Dedicated venv used; einops restored; frontend retained; protected CUDA packages unchanged"
 ```
 
-**Pass:** SwarmUI uses `$COMFY_PY`, restores the missing import, keeps frontend `1.48.7`, leaves Torch-family versions unchanged, reaches `Running`, and leaves `pip check` clean.
+**Fail:** system Python is used, protected packages or frontend change, repair fails, or the backend is not `Running`.
 
-**Fail:** system Python is used, the CUDA stack changes, the frontend changes, dependency repair fails, or the backend remains `Loading`/`Errored`.
-
-## 7. One backend per GPU
+## 6. One backend per GPU
 
 Copy the validated backend twice and change only name and GPU ID:
 
@@ -412,43 +431,23 @@ Copy the validated backend twice and change only name and GPU ID:
 | `B02` | `comfy033-gpu1` | `1` |
 | `B03` | `comfy033-gpu2` | `2` |
 
-Start all three. SwarmUI normally allocates from port 7821 upward, but another local process can change that. Derive ports from the live command lines.
+Start all three, then derive live PIDs and ports:
 
 ```bash
-python3 - "$COMFY_REPO/main.py" <<'PY' \
+python3 "$EV/discover_comfy.py" "$COMFY_REPO/main.py" \
   | tee "$EV/30-self-start/backends.tsv"
-from pathlib import Path
-import os, sys
-script = str(Path(sys.argv[1]).resolve())
-rows = []
-for proc in Path("/proc").glob("[0-9]*"):
-    try:
-        cmd = (proc / "cmdline").read_bytes().split(b"\0")
-        args = [x.decode() for x in cmd if x]
-        if script not in [str(Path(a).resolve()) if a.endswith("main.py") else a for a in args]:
-            continue
-        env = {}
-        for item in (proc / "environ").read_bytes().split(b"\0"):
-            if b"=" in item:
-                key, value = item.split(b"=", 1)
-                env[key.decode()] = value.decode()
-        gpu = env.get("CUDA_VISIBLE_DEVICES", "")
-        port = args[args.index("--port") + 1]
-        rows.append((f"comfy033-gpu{gpu}", gpu, int(proc.name), int(port)))
-    except (FileNotFoundError, PermissionError, ValueError, UnicodeDecodeError):
-        pass
-rows.sort(key=lambda row: row[1])
+python3 - <<'PY' "$EV/30-self-start/backends.tsv"
+import csv, sys
+with open(sys.argv[1], newline="") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
 assert len(rows) == 3, rows
-assert [row[1] for row in rows] == ["0", "1", "2"], rows
-assert len({row[2] for row in rows}) == 3
-assert len({row[3] for row in rows}) == 3
-print("name\tgpu\tpid\tport")
-for row in rows:
-    print("\t".join(map(str, row)))
+assert [row["gpu"] for row in rows] == ["0", "1", "2"], rows
+assert len({row["pid"] for row in rows}) == 3
+assert len({row["port"] for row in rows}) == 3
 PY
 
 ps -eo pid=,args= | grep -F "$COMFY_REPO/main.py" \
-  | grep -v grep | tee "$EV/30-self-start/processes.txt"
+  | grep -v grep | tee "$EV/30-self-start/processes.txt" || true
 ss -ltnp | tee "$EV/30-self-start/listeners.txt"
 
 : > "$EV/30-self-start/system-stats.jsonl"
@@ -459,7 +458,6 @@ tail -n +2 "$EV/30-self-start/backends.tsv" \
           '{backend:$backend,configured_gpu:$gpu,pid:$pid,version:.system.comfyui_version,devices:.devices}' \
         | tee -a "$EV/30-self-start/system-stats.jsonl"
     done
-
 if jq -e 'select(.version != "0.33.0")' \
      "$EV/30-self-start/system-stats.jsonl" >/dev/null; then
   echo "A backend reports the wrong ComfyUI version" >&2
@@ -467,55 +465,36 @@ if jq -e 'select(.version != "0.33.0")' \
 fi
 ```
 
-Save these screenshots:
-
-- `30-self-start/B01-gpu0-running.png`
-- `30-self-start/B02-gpu1-running.png`
-- `30-self-start/B03-gpu2-running.png`
-
-Record each only after the process table, environment mask, unique port, version, and screenshot agree:
+Save `B01-gpu0-running.png`, `B02-gpu1-running.png`, and `B03-gpu2-running.png`, each showing `Running`.
 
 ```bash
 record_result B01 PASS \
   "30-self-start/backends.tsv; 30-self-start/system-stats.jsonl; 30-self-start/B01-gpu0-running.png" \
-  "Unique process and port with CUDA mask 0; ComfyUI 0.33.0; Running"
+  "Unique PID and port, CUDA mask 0, ComfyUI 0.33.0"
 record_result B02 PASS \
   "30-self-start/backends.tsv; 30-self-start/system-stats.jsonl; 30-self-start/B02-gpu1-running.png" \
-  "Unique process and port with CUDA mask 1; ComfyUI 0.33.0; Running"
+  "Unique PID and port, CUDA mask 1, ComfyUI 0.33.0"
 record_result B03 PASS \
   "30-self-start/backends.tsv; 30-self-start/system-stats.jsonl; 30-self-start/B03-gpu2-running.png" \
-  "Unique process and port with CUDA mask 2; ComfyUI 0.33.0; Running"
+  "Unique PID and port, CUDA mask 2, ComfyUI 0.33.0"
 ```
 
-**Fail:** a combined mask such as `0,1,2`, duplicate process or port, incorrect version, or any backend not `Running`.
+**Fail:** combined or duplicate GPU masks, duplicate PIDs/ports, incorrect version, or any backend not `Running`.
 
 ### B04 — simultaneous fan-out
 
-Use the Generate tab with the test checkpoint:
+Generate three images with the test checkpoint: `1024×1024`, 40 steps, CFG 5, Euler, Normal, seed `330000`, batch size 1, images 3, prompt `SwarmUI ComfyUI 0.33.0 three GPU acceptance RUN_ID`.
 
-| Setting | Value |
-| --- | --- |
-| Prompt | `SwarmUI ComfyUI 0.33.0 three GPU acceptance RUN_ID` |
-| Width × height | `1024 × 1024` |
-| Steps | `40` |
-| CFG scale | `5` |
-| Sampler | `Euler` |
-| Scheduler | `Normal` |
-| Seed | `330000` |
-| Batch size | `1` |
-| Images | `3` |
-
-Start telemetry immediately before clicking **Generate**:
+Immediately before clicking **Generate**:
 
 ```bash
 : > "$EV/30-self-start/B04-gpu-telemetry.csv"
 for _ in $(seq 1 120); do
   printf '%s,' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
     >> "$EV/30-self-start/B04-gpu-telemetry.csv"
-  nvidia-smi \
-    --query-gpu=index,uuid,utilization.gpu,memory.used \
-    --format=csv,noheader,nounits \
-    | paste -sd '|' - >> "$EV/30-self-start/B04-gpu-telemetry.csv"
+  nvidia-smi --query-gpu=index,uuid,utilization.gpu,memory.used \
+    --format=csv,noheader,nounits | paste -sd '|' - \
+    >> "$EV/30-self-start/B04-gpu-telemetry.csv"
   sleep 1
 done &
 GPU_WATCH_PID=$!
@@ -535,12 +514,11 @@ done &
 QUEUE_WATCH_PID=$!
 ```
 
-After all three images complete:
+After all three complete:
 
 ```bash
 kill "$GPU_WATCH_PID" "$QUEUE_WATCH_PID" 2>/dev/null || true
 wait "$GPU_WATCH_PID" "$QUEUE_WATCH_PID" 2>/dev/null || true
-
 nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits \
   > "$EV/30-self-start/gpu-index-uuid.csv"
 nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory \
@@ -555,71 +533,66 @@ python3 - <<'PY' \
   | tee "$EV/30-self-start/B04-validation.txt"
 import csv, json, sys
 from pathlib import Path
-
 with open(sys.argv[1], newline="") as handle:
     backends = list(csv.DictReader(handle, delimiter="\t"))
 index_uuid = {}
 for line in Path(sys.argv[2]).read_text().splitlines():
-    index, uuid = [item.strip() for item in line.split(",", 1)]
+    index, uuid = [part.strip() for part in line.split(",", 1)]
     index_uuid[index] = uuid
 pid_uuids = {}
 for line in Path(sys.argv[3]).read_text().splitlines():
     if not line.strip():
         continue
-    pid, uuid, _memory = [item.strip() for item in line.split(",", 2)]
+    pid, uuid, _memory = [part.strip() for part in line.split(",", 2)]
     pid_uuids.setdefault(pid, set()).add(uuid)
 for backend in backends:
     expected = index_uuid[backend["gpu"]]
     seen = pid_uuids.get(backend["pid"], set())
     assert seen == {expected}, f"{backend['name']}: expected {expected}, saw {seen}"
-queue_seen = {backend["name"]: False for backend in backends}
+ran = {backend["name"]: False for backend in backends}
 for line in Path(sys.argv[4]).read_text().splitlines():
     row = json.loads(line)
     if row.get("queue_running"):
-        queue_seen[row["backend"]] = True
-assert all(queue_seen.values()), queue_seen
+        ran[row["backend"]] = True
+assert all(ran.values()), ran
 print("PID_TO_PHYSICAL_GPU=PASS")
 print("EVERY_BACKEND_RAN_A_JOB=PASS")
 PY
 ```
 
-Download the three originals to `$EV/30-self-start/B04-originals/`, save `B04-three-results.png` and `B04-backends-running.png`, then:
+Download the three originals into `30-self-start/B04-originals/`; save `B04-three-results.png` and `B04-backends-running.png`.
 
 ```bash
 mkdir -p "$EV/30-self-start/B04-originals"
 test "$(find "$EV/30-self-start/B04-originals" -type f | wc -l)" -eq 3
 sha256sum "$EV/30-self-start/B04-originals"/* \
   > "$EV/30-self-start/B04-output-sha256.txt"
-
 record_result B04 PASS \
   "30-self-start/B04-gpu-telemetry.csv; 30-self-start/B04-queues.jsonl; 30-self-start/B04-validation.txt; 30-self-start/B04-three-results.png; 30-self-start/B04-backends-running.png; 30-self-start/B04-output-sha256.txt" \
-  "Three jobs completed concurrently; every backend ran; each PID mapped to its configured physical GPU"
+  "Three jobs completed; every backend ran; each PID mapped to its configured physical GPU"
 ```
 
-**Fail:** any GPU remains unused, work serialises onto one backend while another is free, a PID maps to the wrong or multiple physical GPUs, an output is missing, or a backend leaves `Running`.
+**Fail:** a GPU remains unused, jobs serialise onto one backend while another is free, PID-to-UUID mapping is wrong, output is missing, or a backend leaves `Running`.
 
-## 8. Native and prefixed route fixtures
+## 7. Root and `/api` fixtures
 
-Stop the three self-start backends through SwarmUI. Keep their saved configurations.
+Stop all three self-start backends. Start native ComfyUI on GPU 0:
 
 ```bash
 export MODEL_YAML="$SWARM_REPO/Data/comfy-auto-model.yaml"
 test -s "$MODEL_YAML"
-
 tmux kill-session -t comfy033-native 2>/dev/null || true
 tmux new-session -d -s comfy033-native \
   "cd '$COMFY_REPO' && CUDA_VISIBLE_DEVICES=0 '$COMFY_PY' main.py \
    --listen 127.0.0.1 --port 8188 --preview-method latent2rgb \
    --extra-model-paths-config '$MODEL_YAML' \
    2>&1 | tee '$EV/40-routes/native-comfy.log'"
-
 timeout 180 bash -c '
   until curl -fsS http://127.0.0.1:8188/system_stats >/dev/null; do sleep 1; done
 '
 curl -fsS http://127.0.0.1:8188/system_stats \
   | tee "$EV/40-routes/native-system-stats.json" \
   | jq -e '.system.comfyui_version == "0.33.0"'
-
 curl -sS -o "$EV/40-routes/native-api-system-stats.body" \
   -w '%{http_code}\n' http://127.0.0.1:8188/api/system_stats \
   | tee "$EV/40-routes/native-api-system-stats.code"
@@ -630,7 +603,7 @@ if jq -e '.system.comfyui_version == "0.33.0"' \
 fi
 ```
 
-Create a local reverse proxy that exposes only `/api/*` and supports WebSocket upgrades:
+Create an `/api`-only reverse proxy:
 
 ```bash
 export NGINX_ROOT="$EV/40-routes/nginx-api"
@@ -643,10 +616,7 @@ events { worker_connections 1024; }
 http {
   log_format acceptance '\$remote_addr [\$time_iso8601] "\$request" \$status \$body_bytes_sent';
   access_log $NGINX_ROOT/access.log acceptance;
-  map \$http_upgrade \$connection_upgrade {
-    default upgrade;
-    '' close;
-  }
+  map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
   server {
     listen 127.0.0.1:8288;
     location /api/ {
@@ -660,11 +630,9 @@ http {
   }
 }
 EOF
-
 nginx -t -p "$NGINX_ROOT/" -c nginx.conf \
   2>&1 | tee "$EV/40-routes/nginx-config-test.txt"
 nginx -p "$NGINX_ROOT/" -c nginx.conf
-
 timeout 30 bash -c '
   until curl -fsS http://127.0.0.1:8288/api/system_stats >/dev/null; do sleep 1; done
 '
@@ -676,7 +644,7 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8288/system_sta
 
 ### R01 — native root auto-detection
 
-Enable one **ComfyUI API** backend and no other generation backend:
+Add one **ComfyUI API** backend, with all others stopped:
 
 | Field | Value |
 | --- | --- |
@@ -687,24 +655,23 @@ Enable one **ComfyUI API** backend and no other generation backend:
 | API Path Mode | `Auto Detect` |
 | Enable Frontend Dev | off |
 
-Save `40-routes/R01-native-auto-running.png`, then:
+Save `R01-native-auto-running.png`; capture the matching load log:
 
 ```bash
 grep -Ei 'route resolved|root routes|comfy033-native-auto' \
-  "$EV/10-build/swarm-runtime.log" \
-  | tail -n 100 > "$EV/40-routes/R01-native-auto.log"
+  "$EV/10-build/swarm-runtime.log" | tail -n 100 \
+  > "$EV/40-routes/R01-native-auto.log"
 test -s "$EV/40-routes/R01-native-auto.log"
-
 record_result R01 PASS \
   "40-routes/R01-native-auto-running.png; 40-routes/R01-native-auto.log; 40-routes/native-system-stats.json; 40-routes/native-api-system-stats.body" \
-  "Auto Detect rejected the invalid prefixed response, selected root routes, and reached Running"
+  "Auto Detect rejected invalid prefixed content, selected root routes, and reached Running"
 ```
 
-**Fail:** an arbitrary 2xx/HTML response is accepted as ComfyUI JSON, `/api` is selected, scheme omission breaks the address, or the backend does not reach `Running`.
+**Fail:** arbitrary 2xx/HTML is accepted, `/api` is selected, scheme omission breaks the address, or backend is not `Running`.
 
 ### R02 — live `/api` auto-detection
 
-Stop `comfy033-native-auto`. Clear the proxy log and add:
+Stop `comfy033-native-auto`, clear the proxy log, and add:
 
 | Field | Value |
 | --- | --- |
@@ -719,66 +686,60 @@ Stop `comfy033-native-auto`. Clear the proxy log and add:
 : > "$NGINX_ROOT/access.log"
 ```
 
-Save `40-routes/R02-api-auto-running.png`, then:
+Save `R02-api-auto-running.png`, then:
 
 ```bash
 cp "$NGINX_ROOT/access.log" "$EV/40-routes/R02-nginx-access.log"
 grep -E '"GET /api/system_stats ' "$EV/40-routes/R02-nginx-access.log"
 grep -E '"GET /api/object_info ' "$EV/40-routes/R02-nginx-access.log"
+python3 "$EV/validate_proxy_log.py" "$EV/40-routes/R02-nginx-access.log" \
+  | tee "$EV/40-routes/R02-prefix-validation.txt"
 grep -Ei 'route resolved|/api prefix|comfy033-api-auto' \
-  "$EV/10-build/swarm-runtime.log" \
-  | tail -n 100 > "$EV/40-routes/R02-api-auto.log"
-
+  "$EV/10-build/swarm-runtime.log" | tail -n 100 \
+  > "$EV/40-routes/R02-api-auto.log"
 record_result R02 PASS \
-  "40-routes/R02-api-auto-running.png; 40-routes/R02-api-auto.log; 40-routes/R02-nginx-access.log" \
+  "40-routes/R02-api-auto-running.png; 40-routes/R02-api-auto.log; 40-routes/R02-nginx-access.log; 40-routes/R02-prefix-validation.txt" \
   "Auto Detect validated ComfyUI JSON below /api, retained the prefix, and reached Running"
 ```
 
-**Fail:** the probe accepts non-ComfyUI content, subsequent requests lose the prefix, or `/object_info` does not load.
+**Fail:** probe accepts non-ComfyUI content, later requests lose prefix, or `/object_info` fails.
 
-### R03 — recovery after an offline start
+### R03 — offline-start recovery
 
-Stop `comfy033-api-auto`, stop the proxy, and confirm port 8288 is unavailable:
+Stop `comfy033-api-auto`; stop the proxy and confirm port 8288 is unavailable:
 
 ```bash
 nginx -p "$NGINX_ROOT/" -c nginx.conf -s stop
 until ! curl -fsS http://127.0.0.1:8288/api/system_stats >/dev/null 2>&1; do sleep 1; done
 ```
 
-Add `comfy033-api-recovery` with the same settings as `R02` while the proxy is offline. Save `40-routes/R03-initial-idle.png`; the state must be `Idle`, not `Running` or permanently `Errored`.
-
-Start the proxy and wait at most 30 seconds:
+Add `comfy033-api-recovery` with the same settings as `R02` while offline. Save `R03-initial-idle.png`; state must be `Idle`. Start the proxy:
 
 ```bash
 : > "$NGINX_ROOT/access.log"
 nginx -p "$NGINX_ROOT/" -c nginx.conf
-
 timeout 30 bash -c '
-  until grep -qE "GET /api/(system_stats|features|object_info)" '"$NGINX_ROOT"'/access.log; do
-    sleep 1
-  done
+  until grep -qE "GET /api/(system_stats|features|object_info)" '"$NGINX_ROOT"'/access.log; do sleep 1; done
 '
 ```
 
-Save `40-routes/R03-recovered-running.png`, then:
+Save `R03-recovered-running.png`, then:
 
 ```bash
 grep -Ei 'changed auto-detected route style|/api prefix|comfy033-api-recovery' \
-  "$EV/10-build/swarm-runtime.log" \
-  | tail -n 150 > "$EV/40-routes/R03-recovery.log"
+  "$EV/10-build/swarm-runtime.log" | tail -n 150 \
+  > "$EV/40-routes/R03-recovery.log"
 cp "$NGINX_ROOT/access.log" "$EV/40-routes/R03-nginx-access.log"
-
-grep -E '"GET /api/(system_stats|features|object_info)' \
-  "$EV/40-routes/R03-nginx-access.log"
-
+python3 "$EV/validate_proxy_log.py" "$EV/40-routes/R03-nginx-access.log" \
+  | tee "$EV/40-routes/R03-prefix-validation.txt"
 record_result R03 PASS \
-  "40-routes/R03-initial-idle.png; 40-routes/R03-recovered-running.png; 40-routes/R03-recovery.log; 40-routes/R03-nginx-access.log" \
-  "The idle backend re-probed, changed route style, cleared stale sockets, and recovered without an edit or restart"
+  "40-routes/R03-initial-idle.png; 40-routes/R03-recovered-running.png; 40-routes/R03-recovery.log; 40-routes/R03-nginx-access.log; 40-routes/R03-prefix-validation.txt" \
+  "Idle backend re-probed, changed route style, cleared stale sockets, and recovered without edit or restart"
 ```
 
-**Fail:** recovery needs a settings edit or process restart, remains on root routes, exceeds 30 seconds after proxy health, or leaves a stale WebSocket in use.
+**Fail:** recovery needs edit/restart, stays on root, exceeds 30 seconds after proxy health, or reuses a stale socket.
 
-### R04 — forced root/legacy-compatible fallback
+### R04 — forced root fallback and blank address
 
 Stop `comfy033-api-recovery`. Add:
 
@@ -787,131 +748,128 @@ Stop `comfy033-api-recovery`. Add:
 | Name | `comfy033-root-forced` |
 | Address | `http://127.0.0.1:8188/api` |
 | Allow Idle | off |
-| OverQueue | `1` |
 | API Path Mode | `Force Root Routes` |
 | Enable Frontend Dev | off |
 
-Save `40-routes/R04-forced-root-running.png`, then:
+Save `R04-forced-root-running.png` and capture:
 
 ```bash
 grep -Ei 'route resolved|root routes|comfy033-root-forced' \
-  "$EV/10-build/swarm-runtime.log" \
-  | tail -n 100 > "$EV/40-routes/R04-forced-root.log"
+  "$EV/10-build/swarm-runtime.log" | tail -n 100 \
+  > "$EV/40-routes/R04-forced-root.log"
 test -s "$EV/40-routes/R04-forced-root.log"
-
-record_result R04 PASS \
-  "40-routes/R04-forced-root-running.png; 40-routes/R04-forced-root.log; 40-routes/native-system-stats.json" \
-  "Forced root mode overrode the saved /api suffix and loaded native 0.33.0 routes"
 ```
 
-Also add a temporary API backend with an empty address. It must save as `Disabled`, make no request to ports 8188 or 8288, and be captured as `40-routes/blank-address-disabled.png`.
+Stop every API backend. Start a 40-second loopback capture, immediately add a temporary API backend with an empty address, save it, and capture its `Disabled` state as `blank-address-disabled.png`.
 
-**Fail:** the suffix overrides the explicit mode, `/api/object_info` is requested, the forced backend does not run, or a blank address silently targets localhost.
+```bash
+sudo rm -f "$EV/40-routes/blank-address.pcap"
+sudo timeout 40 tcpdump -i lo -nn -s 128 \
+  '(tcp port 8188 or tcp port 8288)' \
+  -w "$EV/40-routes/blank-address.pcap" &
+CAPTURE_PID=$!
+# Immediately create/save the blank-address backend in the browser.
+wait "$CAPTURE_PID" || true
+sudo chown "$USER:$USER" "$EV/40-routes/blank-address.pcap"
+tcpdump -nn -r "$EV/40-routes/blank-address.pcap" 2>/dev/null \
+  | tee "$EV/40-routes/blank-address-packets.txt"
+test ! -s "$EV/40-routes/blank-address-packets.txt"
 
-## 9. Generate and Comfy Workflow
+record_result R04 PASS \
+  "40-routes/R04-forced-root-running.png; 40-routes/R04-forced-root.log; 40-routes/blank-address-disabled.png; 40-routes/blank-address.pcap; 40-routes/blank-address-packets.txt" \
+  "Forced root overrode /api suffix; blank address disabled without contacting either endpoint"
+```
 
-Use only the named backend for each test.
+**Fail:** saved suffix overrides explicit root mode, forced backend fails, blank address targets localhost, or capture contains traffic.
+
+## 8. Generate and Comfy Workflow
 
 ### G01 — Generate through root routes
 
-With `comfy033-root-forced` enabled, use:
+Enable only `comfy033-root-forced`. Generate one image with the test checkpoint: `512×512`, 20 steps, CFG 5, Euler, Normal, seed `330001`, prompt `SwarmUI ComfyUI 0.33.0 native root acceptance RUN_ID`.
 
-| Setting | Value |
-| --- | --- |
-| Prompt | `SwarmUI ComfyUI 0.33.0 native root acceptance RUN_ID` |
-| Width × height | `512 × 512` |
-| Steps | `20` |
-| CFG scale | `5` |
-| Sampler | `Euler` |
-| Scheduler | `Normal` |
-| Seed | `330001` |
-| Images | `1` |
-
-Save `50-generate/G01-settings.png`, `G01-complete.png`, and the downloaded original as `G01-original.png`.
+Save `G01-settings.png`, `G01-complete.png`, and downloaded `G01-original.png`.
 
 ```bash
 sha256sum "$EV/50-generate/G01-original.png" \
   > "$EV/50-generate/G01-original.sha256"
-grep -Ei '330001|comfy033-root-forced|ComfyUI' \
-  "$EV/10-build/swarm-runtime.log" \
-  | tail -n 200 > "$EV/50-generate/G01-log.txt"
-
 record_result G01 PASS \
-  "50-generate/G01-settings.png; 50-generate/G01-complete.png; 50-generate/G01-original.png; 50-generate/G01-original.sha256; 50-generate/G01-log.txt" \
-  "Generate completed through root HTTP and WebSocket routes with the expected model and seed"
+  "50-generate/G01-settings.png; 50-generate/G01-complete.png; 50-generate/G01-original.png; 50-generate/G01-original.sha256" \
+  "Generate completed through root routes with expected model, seed, final image, and metadata"
 ```
 
-**Fail:** a preview is mistaken for the final, metadata is missing, download fails, or the backend changes state.
+**Fail:** preview mistaken for final, metadata wrong/missing, download fails, or backend changes state.
 
 ### G02 — Generate through `/api`
 
-Enable only `comfy033-api-auto` or `comfy033-api-recovery`, ensure it is `Running`, and clear the proxy log. Use seed `330002` and prompt `SwarmUI ComfyUI 0.33.0 prefixed acceptance RUN_ID` with the remaining `G01` settings.
+Stop all API backends, truncate proxy log, start `comfy033-api-auto` or `comfy033-api-recovery`, and wait for `Running`. Generate with the `G01` settings, seed `330002`, prompt `SwarmUI ComfyUI 0.33.0 prefixed acceptance RUN_ID`.
 
 ```bash
 : > "$NGINX_ROOT/access.log"
 ```
 
-Save `50-generate/G02-complete.png` and `G02-original.png`, then:
+Save `G02-complete.png` and `G02-original.png`. Stop the API backend after output capture so its reusable socket closes, then:
 
 ```bash
+timeout 15 bash -c '
+  until grep -qE "GET /api/ws[^ ]* HTTP/[0-9.]+\" 101" '"$NGINX_ROOT"'/access.log; do sleep 1; done
+'
 cp "$NGINX_ROOT/access.log" "$EV/50-generate/G02-nginx-access.log"
 grep -E '"POST /api/prompt ' "$EV/50-generate/G02-nginx-access.log"
 grep -E '"GET /api/ws[^ ]* HTTP/[0-9.]+" 101 ' \
   "$EV/50-generate/G02-nginx-access.log"
-if awk '$7 !~ /^\/api\// && $9 ~ /^(200|201|202|204|101)$/' \
-     "$EV/50-generate/G02-nginx-access.log" | grep .; then
-  echo "A successful API request lost its prefix" >&2
-  false
-fi
+python3 "$EV/validate_proxy_log.py" "$EV/50-generate/G02-nginx-access.log" \
+  | tee "$EV/50-generate/G02-prefix-validation.txt"
 sha256sum "$EV/50-generate/G02-original.png" \
   > "$EV/50-generate/G02-original.sha256"
-
 record_result G02 PASS \
-  "50-generate/G02-complete.png; 50-generate/G02-original.png; 50-generate/G02-original.sha256; 50-generate/G02-nginx-access.log" \
-  "Generate completed with both HTTP and WebSocket traffic retaining /api"
+  "50-generate/G02-complete.png; 50-generate/G02-original.png; 50-generate/G02-original.sha256; 50-generate/G02-nginx-access.log; 50-generate/G02-prefix-validation.txt" \
+  "Generate completed with prompt and WebSocket traffic retaining /api"
 ```
 
-**Fail:** HTTP is prefixed but WebSocket is not, any successful API request loses the prefix, final output is missing, or the backend leaves `Running`.
+**Fail:** HTTP and WebSocket route styles diverge, any successful API request loses prefix, or output is missing.
 
-### C01 — Comfy Workflow generation
+### C01 — Comfy Workflow from both entry points
 
-1. Open **Comfy Workflow**.
-2. Open **Browse Workflows** and load `Basic SDXL`.
-3. Confirm there is no missing-node warning.
-4. Set `SwarmInputCheckpoint` to `TEST_CHECKPOINT_REL`.
-5. Set the positive prompt to `SwarmUI Comfy Workflow 0.33.0 acceptance RUN_ID`.
-6. Set width and height `512`, steps `20`, CFG `5`, seed `330003`, sampler `euler`, scheduler `normal`.
-7. Save as `acceptance-comfy033-RUN_ID`.
-8. Choose **Use This Workflow In Generate Tab** and generate one image.
-9. Reload the saved workflow and generate a second image directly from the Comfy Workflow tab.
-
-Save:
-
-- `60-workflow/C01-graph.png`
-- `60-workflow/C01-generate-tab.png`
-- `60-workflow/C01-workflow-tab.png`
-- originals as `C01-original-generate.png` and `C01-original-workflow.png`
+Stop the API backend, truncate proxy log, restart it, and wait for `Running`.
 
 ```bash
-cp "$NGINX_ROOT/access.log" "$EV/60-workflow/C01-nginx-access.log"
-grep -E '"POST /api/prompt ' "$EV/60-workflow/C01-nginx-access.log"
-grep -E '"GET /api/ws[^ ]* HTTP/[0-9.]+" 101 ' \
-  "$EV/60-workflow/C01-nginx-access.log"
-sha256sum "$EV/60-workflow"/C01-original-*.png \
-  > "$EV/60-workflow/C01-output-sha256.txt"
-
-record_result C01 PASS \
-  "60-workflow/C01-graph.png; 60-workflow/C01-generate-tab.png; 60-workflow/C01-workflow-tab.png; 60-workflow/C01-nginx-access.log; 60-workflow/C01-output-sha256.txt" \
-  "Basic SDXL loaded, saved, reloaded, and generated from both SwarmUI entry points"
+: > "$NGINX_ROOT/access.log"
 ```
 
-**Fail:** a missing node, unresolved checkpoint/input, silent fallback to the standard workflow, failed reload, missing output, or route-prefix mismatch.
+1. Open **Comfy Workflow** → **Browse Workflows** → `Basic SDXL`.
+2. Confirm no missing-node warning.
+3. Set `SwarmInputCheckpoint` to `TEST_CHECKPOINT_REL`.
+4. Set positive prompt `SwarmUI Comfy Workflow 0.33.0 acceptance RUN_ID`.
+5. Use `512×512`, 20 steps, CFG 5, seed `330003`, sampler `euler`, scheduler `normal`.
+6. Save as `acceptance-comfy033-RUN_ID`.
+7. Choose **Use This Workflow In Generate Tab** and generate once.
+8. Reload the saved workflow and generate once directly from Comfy Workflow.
 
-## 10. WebSocket previews and cancellation
+Save `C01-graph.png`, `C01-generate-tab.png`, `C01-workflow-tab.png`, and both originals. Stop the backend to close the socket, then:
 
-### W01 — upgrade and multiple live previews
+```bash
+timeout 15 bash -c '
+  until grep -qE "GET /api/ws[^ ]* HTTP/[0-9.]+\" 101" '"$NGINX_ROOT"'/access.log; do sleep 1; done
+'
+cp "$NGINX_ROOT/access.log" "$EV/60-workflow/C01-nginx-access.log"
+test "$(grep -c '"POST /api/prompt ' "$EV/60-workflow/C01-nginx-access.log")" -ge 2
+python3 "$EV/validate_proxy_log.py" "$EV/60-workflow/C01-nginx-access.log" \
+  | tee "$EV/60-workflow/C01-prefix-validation.txt"
+sha256sum "$EV/60-workflow"/C01-original-*.png \
+  > "$EV/60-workflow/C01-output-sha256.txt"
+record_result C01 PASS \
+  "60-workflow/C01-graph.png; 60-workflow/C01-generate-tab.png; 60-workflow/C01-workflow-tab.png; 60-workflow/C01-nginx-access.log; 60-workflow/C01-prefix-validation.txt; 60-workflow/C01-output-sha256.txt" \
+  "Basic SDXL loaded, saved, reloaded, and generated from both entry points"
+```
 
-Use the `/api` backend with `1024 × 1024`, 60 steps, CFG 5, seed `330004`, and latent preview mode. Clear the proxy log before starting.
+**Fail:** missing node/input, wrong checkpoint, failed reload, silent standard-workflow fallback, missing output, or prefix mismatch.
+
+## 9. WebSocket previews and cancellation
+
+### W01 — live previews
+
+Stop the API backend, truncate proxy log, restart it, and wait for `Running`. Generate `1024×1024`, 60 steps, CFG 5, seed `330004`, latent preview mode.
 
 ```bash
 : > "$NGINX_ROOT/access.log"
@@ -924,41 +882,43 @@ done &
 SOCKET_WATCH_PID=$!
 ```
 
-Capture two visibly different previews at different progress values as `W01-preview-01.png` and `W01-preview-02.png`. After completion:
+Capture two visibly different previews at different progress values as `W01-preview-01.png` and `W01-preview-02.png`. After final output, stop the backend and then:
 
 ```bash
 kill "$SOCKET_WATCH_PID" 2>/dev/null || true
 wait "$SOCKET_WATCH_PID" 2>/dev/null || true
+timeout 15 bash -c '
+  until grep -qE "GET /api/ws[^ ]* HTTP/[0-9.]+\" 101" '"$NGINX_ROOT"'/access.log; do sleep 1; done
+'
 cp "$NGINX_ROOT/access.log" "$EV/70-ws-cancel/W01-nginx-access.log"
 grep -E '"GET /api/ws[^ ]* HTTP/[0-9.]+" 101 ' \
   "$EV/70-ws-cancel/W01-nginx-access.log"
-
 record_result W01 PASS \
   "70-ws-cancel/W01-preview-01.png; 70-ws-cancel/W01-preview-02.png; 70-ws-cancel/W01-sockets.txt; 70-ws-cancel/W01-nginx-access.log" \
-  "A prefixed WebSocket upgraded and delivered at least two distinct previews before the final"
+  "Prefixed WebSocket upgraded and delivered at least two distinct previews before final output"
 ```
 
-**Fail:** only polling occurs, `/ws` loses the prefix, upgrade status is not 101, progress does not advance, or the two captures are not distinct live previews.
+**Fail:** polling only, lost prefix, no 101 upgrade, static/duplicate previews, or stalled progress.
 
-### W02 — cancellation, cleanup, and recovery
+### W02 — cancellation and recovery
 
-Start another `1024 × 1024`, 60-step request with seed `330005`. Once a preview is visible:
+Truncate proxy log, start the API backend, and generate `1024×1024`, 60 steps, seed `330005`. Once a preview is visible:
 
 ```bash
+: > "$NGINX_ROOT/access.log"
 curl -fsS http://127.0.0.1:8288/api/queue \
   | tee "$EV/70-ws-cancel/W02-queue-before.json"
 python3 - <<'PY' "$EV/70-ws-cancel/W02-queue-before.json" \
   | tee "$EV/70-ws-cancel/W02-prompt-id.txt"
 import json, sys
-obj = json.load(open(sys.argv[1]))
-running = obj.get("queue_running", [])
+running = json.load(open(sys.argv[1])).get("queue_running", [])
 assert running, "No running prompt to cancel"
 print(running[0][1])
 PY
 export CANCELLED_PROMPT_ID="$(cat "$EV/70-ws-cancel/W02-prompt-id.txt")"
 ```
 
-Click SwarmUI's **Cancel** control. Do not call ComfyUI's interrupt endpoint manually.
+Click SwarmUI **Cancel**. Do not call ComfyUI's interrupt endpoint manually.
 
 ```bash
 timeout 30 bash -c '
@@ -970,7 +930,6 @@ timeout 30 bash -c '
     sleep 1
   done
 '
-
 curl -fsS http://127.0.0.1:8288/api/queue \
   | tee "$EV/70-ws-cancel/W02-queue-after.json"
 curl -fsS "http://127.0.0.1:8288/api/history/$CANCELLED_PROMPT_ID" \
@@ -980,55 +939,62 @@ jq -e '.queue_running == [] and .queue_pending == []' \
 jq -e 'length == 0' "$EV/70-ws-cancel/W02-history-after.json"
 ```
 
-Save `W02-cancelled.png` showing no final output for the cancelled request. Generate a `512 × 512`, 10-step recovery image with seed `330006` and save `W02-recovery-complete.png`.
+Save `W02-cancelled.png` with no final output. Generate a `512×512`, 10-step recovery image with seed `330006`; save `W02-recovery-complete.png`. Stop the backend, then:
 
 ```bash
+timeout 15 bash -c '
+  until grep -qE "GET /api/ws[^ ]* HTTP/[0-9.]+\" 101" '"$NGINX_ROOT"'/access.log; do sleep 1; done
+'
 cp "$NGINX_ROOT/access.log" "$EV/70-ws-cancel/W02-nginx-access.log"
-grep -E '/api/(queue|interrupt|history)' \
-  "$EV/70-ws-cancel/W02-nginx-access.log"
-
+grep -E '"POST /api/queue ' "$EV/70-ws-cancel/W02-nginx-access.log"
+grep -E '"POST /api/interrupt ' "$EV/70-ws-cancel/W02-nginx-access.log"
+grep -E '"POST /api/history ' "$EV/70-ws-cancel/W02-nginx-access.log"
+python3 "$EV/validate_proxy_log.py" "$EV/70-ws-cancel/W02-nginx-access.log" \
+  | tee "$EV/70-ws-cancel/W02-prefix-validation.txt"
 record_result W02 PASS \
-  "70-ws-cancel/W02-queue-before.json; 70-ws-cancel/W02-prompt-id.txt; 70-ws-cancel/W02-cancelled.png; 70-ws-cancel/W02-queue-after.json; 70-ws-cancel/W02-history-after.json; 70-ws-cancel/W02-recovery-complete.png; 70-ws-cancel/W02-nginx-access.log" \
-  "Cancel interrupted the active prompt, cleared queue/history, emitted no final output, and the backend generated again"
+  "70-ws-cancel/W02-queue-before.json; 70-ws-cancel/W02-prompt-id.txt; 70-ws-cancel/W02-cancelled.png; 70-ws-cancel/W02-queue-after.json; 70-ws-cancel/W02-history-after.json; 70-ws-cancel/W02-recovery-complete.png; 70-ws-cancel/W02-nginx-access.log; 70-ws-cancel/W02-prefix-validation.txt" \
+  "Cancel deleted queued/running work and history; no final output; same backend recovered"
 ```
 
-**Fail:** work continues, queue or cancelled history remains, a final image appears, the WebSocket is permanently lost, or recovery requires a restart.
+**Fail:** work continues, queue/history remains, final image appears, required cancellation calls are absent, socket is permanently lost, or recovery needs restart.
 
-## 11. Outputs and history
+## 10. Outputs and history lifecycle
 
-### H01 — WebSocket output, disk output, API history, and SwarmUI history
+### H01 — final output, Comfy history retrieval/cleanup, disk output, and SwarmUI history
 
-Capture baseline history and create a precise filesystem marker immediately before generation:
+In the `C01` graph keep `SwarmSaveImageWS`, also connect the decoded image to a standard `SaveImage` node, and set filename prefix `swarm033/RUN_ID`.
+
+Stop the API backend, truncate proxy log, restart it, wait for `Running`, and touch an exact output marker:
 
 ```bash
-curl -fsS http://127.0.0.1:8288/api/history \
-  | tee "$EV/80-history/history-before.json"
+: > "$NGINX_ROOT/access.log"
 touch "$EV/80-history/H01-output-start.marker"
 ```
 
-In the workflow from `C01`, retain `SwarmSaveImageWS` and also connect the decoded image to a standard `SaveImage` node. Set its filename prefix to `swarm033/RUN_ID`. Generate once with seed `330007`.
+Generate `1024×1024`, 40 steps, seed `330007`. While it is running:
 
 ```bash
-curl -fsS http://127.0.0.1:8288/api/history \
-  | tee "$EV/80-history/history-after.json"
-
-python3 - <<'PY' \
-  "$EV/80-history/history-before.json" \
-  "$EV/80-history/history-after.json" \
-  | tee "$EV/80-history/new-prompt-id.txt"
+curl -fsS http://127.0.0.1:8288/api/queue \
+  | tee "$EV/80-history/H01-queue-running.json"
+python3 - <<'PY' "$EV/80-history/H01-queue-running.json" \
+  | tee "$EV/80-history/H01-prompt-id.txt"
 import json, sys
-before = set(json.load(open(sys.argv[1])))
-after = set(json.load(open(sys.argv[2])))
-new = sorted(after - before)
-assert len(new) == 1, f"Expected one new prompt, got {new}"
-print(new[0])
+running = json.load(open(sys.argv[1])).get("queue_running", [])
+assert running, "No running prompt"
+print(running[0][1])
 PY
-export HISTORY_PROMPT_ID="$(cat "$EV/80-history/new-prompt-id.txt")"
+export HISTORY_PROMPT_ID="$(cat "$EV/80-history/H01-prompt-id.txt")"
+```
 
+After final output appears, save its original as `H01-output.png`, hard-refresh SwarmUI, open **History**, and save `H01-history.png` plus `H01-metadata.png`. Metadata must show seed `330007` and `TEST_CHECKPOINT_REL`; cancelled work from `W02` must be absent. Stop the API backend to close its socket, then:
+
+```bash
+timeout 15 bash -c '
+  until grep -qE "GET /api/ws[^ ]* HTTP/[0-9.]+\" 101" '"$NGINX_ROOT"'/access.log; do sleep 1; done
+'
 curl -fsS "http://127.0.0.1:8288/api/history/$HISTORY_PROMPT_ID" \
-  | tee "$EV/80-history/new-prompt-history.json"
-jq -e --arg id "$HISTORY_PROMPT_ID" 'has($id)' \
-  "$EV/80-history/new-prompt-history.json"
+  | tee "$EV/80-history/H01-history-after-cleanup.json"
+jq -e 'length == 0' "$EV/80-history/H01-history-after-cleanup.json"
 
 find "$COMFY_REPO/output/swarm033" -type f \
   -newer "$EV/80-history/H01-output-start.marker" \
@@ -1039,29 +1005,27 @@ while IFS= read -r output; do
   sha256sum "$output"
 done < "$EV/80-history/output-files.txt" \
   | tee "$EV/80-history/output-evidence.txt"
-```
 
-Hard-refresh SwarmUI, open **History**, and save:
+cp "$NGINX_ROOT/access.log" "$EV/80-history/H01-nginx-access.log"
+grep -E "\"GET /api/history/$HISTORY_PROMPT_ID " \
+  "$EV/80-history/H01-nginx-access.log"
+grep -E '"GET /api/view' "$EV/80-history/H01-nginx-access.log"
+grep -E '"POST /api/history ' "$EV/80-history/H01-nginx-access.log"
+python3 "$EV/validate_proxy_log.py" "$EV/80-history/H01-nginx-access.log" \
+  | tee "$EV/80-history/H01-prefix-validation.txt"
+sha256sum "$EV/80-history/H01-output.png" \
+  > "$EV/80-history/H01-output.sha256"
 
-- `80-history/H01-history.png`
-- `80-history/H01-output.png`
-- `80-history/H01-metadata.png`
-
-The metadata must show seed `330007` and `TEST_CHECKPOINT_REL`; the cancelled prompt from `W02` must be absent.
-
-```bash
 record_result H01 PASS \
-  "80-history/history-before.json; 80-history/history-after.json; 80-history/new-prompt-id.txt; 80-history/new-prompt-history.json; 80-history/output-files.txt; 80-history/output-evidence.txt; 80-history/H01-history.png; 80-history/H01-output.png; 80-history/H01-metadata.png" \
-  "One prompt produced a WebSocket result, a valid disk file, API history, and a durable SwarmUI history entry"
+  "80-history/H01-queue-running.json; 80-history/H01-prompt-id.txt; 80-history/H01-history-after-cleanup.json; 80-history/output-files.txt; 80-history/output-evidence.txt; 80-history/H01-history.png; 80-history/H01-output.png; 80-history/H01-output.sha256; 80-history/H01-metadata.png; 80-history/H01-nginx-access.log; 80-history/H01-prefix-validation.txt" \
+  "Swarm retrieved final output/history, cleaned Comfy history, wrote disk output, and retained durable SwarmUI history"
 ```
 
-**Fail:** history is ambiguous, disk output is missing/corrupt, metadata is wrong, the result disappears after refresh, output retrieval loses the route prefix, or cancelled work reappears.
+**Fail:** output missing/corrupt, Comfy history retrieval or cleanup missing, SwarmUI History disappears after refresh, metadata wrong, prefix lost, or cancelled work reappears.
 
-## 12. Model paths and text encoders
+## 11. Model paths and text encoders
 
-### M01 — generated YAML, duplicate-key rejection, and discovery
-
-Copy and parse the generated file with a loader that rejects duplicate keys:
+### M01 — unique YAML keys and case-sensitive discovery
 
 ```bash
 cp "$MODEL_YAML" "$EV/90-model-paths/comfy-auto-model.yaml"
@@ -1085,9 +1049,7 @@ UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
     construct_unique_mapping,
 )
-
-path = Path(sys.argv[1])
-data = yaml.load(path.read_text(), Loader=UniqueKeyLoader)
+data = yaml.load(Path(sys.argv[1]).read_text(), Loader=UniqueKeyLoader)
 assert isinstance(data, dict) and data
 sections = [value for key, value in data.items() if key.startswith("swarmui") and key != "swarmui_nodes"]
 assert sections
@@ -1108,11 +1070,7 @@ print("DUPLICATE_KEYS=NONE")
 print("REQUIRED_PATHS=PASS")
 print("TEXT_ENCODER_ALIASES=PASS")
 PY
-```
 
-Create harmless enumeration sentinels. They are invalid model contents and must never be selected or loaded.
-
-```bash
 for directory in text_encoders clip CLIP; do
   mkdir -p "$MODEL_ROOT/$directory"
   printf 'SWARMUI-COMFY033-DISCOVERY-%s-%s\n' "$RUN_ID" "$directory" \
@@ -1121,92 +1079,60 @@ done
 mkdir -p "$MODEL_ROOT/model_patches"
 ```
 
-Restart only `comfy033-gpu0`. Derive its new port and request node metadata:
+Stop external API backends. Start only `comfy033-gpu0`, derive its port, and fetch node metadata:
 
 ```bash
-export MODEL_TEST_PORT="$(python3 - "$COMFY_REPO/main.py" <<'PY'
-from pathlib import Path
-import sys
-script = str(Path(sys.argv[1]).resolve())
-matches = []
-for proc in Path('/proc').glob('[0-9]*'):
-    try:
-        args = [x.decode() for x in (proc / 'cmdline').read_bytes().split(b'\0') if x]
-        env = dict(
-            item.decode().split('=', 1)
-            for item in (proc / 'environ').read_bytes().split(b'\0')
-            if b'=' in item
-        )
-        if script in [str(Path(a).resolve()) if a.endswith('main.py') else a for a in args] \
-                and env.get('CUDA_VISIBLE_DEVICES') == '0':
-            matches.append(args[args.index('--port') + 1])
-    except (FileNotFoundError, PermissionError, ValueError, UnicodeDecodeError):
-        pass
-assert len(matches) == 1, matches
-print(matches[0])
-PY
-)"
-
+python3 "$EV/discover_comfy.py" "$COMFY_REPO/main.py" \
+  | tee "$EV/90-model-paths/model-test-backends.tsv"
+export MODEL_TEST_PORT="$(awk -F '\t' 'NR > 1 && $2 == 0 {print $4}' "$EV/90-model-paths/model-test-backends.tsv")"
+test -n "$MODEL_TEST_PORT"
 curl -fsS "http://127.0.0.1:$MODEL_TEST_PORT/object_info" \
   > "$EV/90-model-paths/object-info.json"
 jq -r '.. | strings' "$EV/90-model-paths/object-info.json" \
-  | grep -F "acceptance-$RUN_ID" \
-  | sort -u | tee "$EV/90-model-paths/discovered-sentinels.txt"
-
-grep -F "acceptance-$RUN_ID-text_encoders.safetensors" \
-  "$EV/90-model-paths/discovered-sentinels.txt"
-grep -F "acceptance-$RUN_ID-clip.safetensors" \
-  "$EV/90-model-paths/discovered-sentinels.txt"
-grep -F "acceptance-$RUN_ID-CLIP.safetensors" \
-  "$EV/90-model-paths/discovered-sentinels.txt"
+  | grep -F "acceptance-$RUN_ID" | sort -u \
+  | tee "$EV/90-model-paths/discovered-sentinels.txt"
+for directory in text_encoders clip CLIP; do
+  grep -F "acceptance-$RUN_ID-$directory.safetensors" \
+    "$EV/90-model-paths/discovered-sentinels.txt"
+done
 ```
 
-Refresh SwarmUI models and save:
-
-- `90-model-paths/M01-checkpoint.png`
-- `90-model-paths/M01-text-encoders.png`
-- `90-model-paths/M01-backend-running.png`
-
-Remove every sentinel immediately and restart the backend once more:
+Refresh models and save `M01-checkpoint.png`, `M01-text-encoders.png`, and `M01-backend-running.png`. Never select a sentinel. Remove them immediately and restart the backend once more:
 
 ```bash
 find "$MODEL_ROOT" -type f -name "acceptance-$RUN_ID-*.safetensors" \
   -print -delete | tee "$EV/90-model-paths/removed-sentinels.txt"
-
 record_result M01 PASS \
   "90-model-paths/comfy-auto-model.yaml; 90-model-paths/yaml-validation.txt; 90-model-paths/object-info.json; 90-model-paths/discovered-sentinels.txt; 90-model-paths/M01-checkpoint.png; 90-model-paths/M01-text-encoders.png; 90-model-paths/M01-backend-running.png; 90-model-paths/removed-sentinels.txt" \
-  "Generated YAML has unique keys, current model categories, model_patches, and three case-sensitive text-encoder aliases that ComfyUI enumerates"
+  "YAML has unique current keys, model_patches, and separately discoverable text_encoders/clip/CLIP paths"
 ```
 
-**Fail:** malformed or duplicate-key YAML, missing category, case folding, undiscoverable checkpoint/text encoder, accidental sentinel loading, or a backend failure after refresh.
+**Fail:** malformed or duplicate-key YAML, missing category, case folding, undiscoverable checkpoint/text encoder, sentinel loading, or backend failure after refresh.
 
-## 13. Merge-blocking risk gates
-
-The following are release blockers. Source inspection alone is insufficient where runtime evidence is named.
+## 12. Merge-blocking risk gates
 
 | Risk | Required disproof |
 | --- | --- |
-| Wrong frontend pin | `D01` and `D02` both show exactly `1.48.7` |
-| Dependency repair changes CUDA packages | `D02` protected-version comparison is identical before and after |
-| `/api` detection accepts arbitrary 2xx/HTML | `R01` rejects the native prefixed response and selects root |
-| Native 0.33.0 routes are misclassified | `R01` shows root routes and version `0.33.0` |
-| Route selection is frozen after an offline start | `R03` moves from `Idle` to `Running` on `/api` without edit/restart |
-| Route change reuses stale sockets | `R03` recovery log and `W01` prove a fresh working prefixed socket |
-| Explicit root mode loses to a saved suffix | `R04` forces root despite an address ending in `/api` |
-| Empty address silently targets localhost | blank-address screenshot shows `Disabled` and proxy/native logs show no request |
-| HTTP and WebSocket route styles diverge | `G02`, `C01`, and `W01` retain `/api` for prompt and socket traffic |
-| Cancellation leaves work or history | `W02` proves empty queue, absent cancelled history, no final output, and recovery |
-| Generated YAML emits duplicate `model_patches` | `M01` duplicate-key loader accepts the file and finds one valid key per section |
-| Text-encoder aliases collapse on Ubuntu | `M01` discovers files from `text_encoders`, `clip`, and `CLIP` separately |
-| One process can see multiple GPUs | `B01`–`B04` prove one mask, PID, port, and physical UUID per backend |
-| Changed source does not compile cleanly | `S01` Release build and changed-source warning gate pass |
+| Wrong 0.33.0 frontend pin | `D01` and `D02` both show exactly `1.48.7` |
+| Dependency repair changes CUDA packages | `D02` protected versions are identical before/after |
+| `/api` probe accepts arbitrary successful content | `R01` rejects native prefixed content and selects root |
+| Native routes are misclassified | `R01` shows root routes and version `0.33.0` |
+| Offline route choice is frozen | `R03` changes from `Idle` to `/api` `Running` without edit/restart |
+| Route change reuses stale sockets | `R03` recovery plus `W01` fresh 101 upgrade |
+| Explicit root loses to address suffix | `R04` forces root despite saved `/api` suffix |
+| Blank address silently targets localhost | `R04` disabled screenshot and empty loopback capture |
+| HTTP/WebSocket prefixes diverge | `G02`, `C01`, `W01`, and `W02` proxy evidence |
+| Cancellation leaves queue/history | `W02` empty queue/history, no final output, successful recovery |
+| Generated YAML duplicates `model_patches` | `M01` duplicate-key loader accepts every section |
+| Text-encoder aliases collapse on Ubuntu | `M01` discovers all three case-sensitive sentinel paths |
+| One process sees multiple physical GPUs | `B01`–`B04` mask/PID/port/UUID evidence |
+| Changed source does not compile cleanly | `S01` Release build and changed-source warning gate |
 
-## 14. Finalise and hash the acceptance record
+## 13. Validate and hash the final record
 
 ```bash
 column -t -s $'\t' "$EV/99-summary/results.tsv" \
   | tee "$EV/99-summary/results.txt"
-
 python3 - <<'PY' "$EV/99-summary/results.tsv" \
   | tee "$EV/99-summary/result-validation.txt"
 import csv, sys
@@ -1230,15 +1156,13 @@ print("ALL_MANDATORY_TESTS=PASS")
 PY
 
 find "$EV" -type f ! -name manifest.sha256 -print0 \
-  | sort -z \
-  | xargs -0 sha256sum \
+  | sort -z | xargs -0 sha256sum \
   > "$EV/99-summary/manifest.sha256"
-
 tar -C "$(dirname "$EV")" -czf "$EV.tar.gz" "$(basename "$EV")"
 sha256sum "$EV.tar.gz" | tee "$EV.tar.gz.sha256"
 ```
 
-Stop only the fixtures created by this procedure:
+Stop only the fixtures created by this runbook:
 
 ```bash
 nginx -p "$NGINX_ROOT/" -c nginx.conf -s stop 2>/dev/null || true
@@ -1246,4 +1170,4 @@ tmux kill-session -t comfy033-native 2>/dev/null || true
 tmux kill-session -t swarm033 2>/dev/null || true
 ```
 
-The source commit SHA, ComfyUI commit SHA, `99-summary/results.tsv`, evidence archive, and archive checksum form the acceptance record.
+The source SHA, ComfyUI SHA, `results.tsv`, evidence archive, and archive checksum form the acceptance record.

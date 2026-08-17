@@ -55,8 +55,10 @@ Object.assign(VideoWorkspaceHelper.prototype, {
         job.expectedOutputs = this.expectedOutputs(input);
         job.startedAt = Date.now();
         this.renderQueue();
+        let handler = new VideoWorkspaceGenerateHandler(this, job.id);
+        this.generateHandlers.set(job.id, handler);
         try {
-            this.generateHandler.doGenerateJob(input, actualInput => {
+            handler.doGenerateJob(input, actualInput => {
                 let actualMetadata = actualInput.extra_metadata && typeof actualInput.extra_metadata == 'object' ? actualInput.extra_metadata : {};
                 actualInput.extra_metadata = {
                     ...actualMetadata,
@@ -65,13 +67,14 @@ Object.assign(VideoWorkspaceHelper.prototype, {
                 };
                 job.status = 'running';
                 job.actualInput = this.clone(actualInput);
-                this.handleGenerationLifecycle('submitted', { input: actualInput });
+                this.handleGenerationLifecycle('submitted', { input: actualInput }, job.id);
                 this.saveQueue();
                 this.renderQueue();
                 this.updateQueueControls();
             });
         }
         catch (e) {
+            this.generateHandlers.delete(job.id);
             job.status = 'failed';
             job.error = e.message;
             this.saveQueue();
@@ -81,32 +84,40 @@ Object.assign(VideoWorkspaceHelper.prototype, {
     },
 
     /** Converts raw GenerateHandler messages into workspace lifecycle events. */
-    handleGenerationData(data) {
+    handleGenerationData(data, fallbackJobId = null) {
         if (!data) {
             return;
         }
         if (data.gen_progress) {
-            this.handleGenerationLifecycle('progress', { data: data.gen_progress });
+            this.handleGenerationLifecycle('progress', { data: data.gen_progress }, fallbackJobId);
         }
         if (data.image) {
-            this.handleGenerationLifecycle('output', { data });
+            this.handleGenerationLifecycle('output', { data }, fallbackJobId);
         }
         if (data.error) {
-            this.handleGenerationLifecycle('error', { data, error: data.error });
+            this.handleGenerationLifecycle('error', { data, error: data.error }, fallbackJobId);
+        }
+        if (data.socket_intention == 'close') {
+            this.handleGenerationLifecycle('socket_closed', { data }, fallbackJobId);
         }
     },
 
-    /** Marks the oldest active workspace job failed when the generation socket gives no job metadata. */
-    handleQueueHandlerError(message) {
-        let job = this.queue.find(item => ['submitting', 'running'].includes(item.status));
+    /** Marks the exact workspace job failed when its dedicated generation socket errors. */
+    handleQueueHandlerError(message, jobId = null) {
+        let job = this.queue.find(item => item.id == jobId) || this.queue.find(item => ['submitting', 'running'].includes(item.status));
         if (!job) {
-            return;
+            return false;
         }
+        if (['completed', 'completed_partial', 'failed', 'cancelled'].includes(job.status)) {
+            return true;
+        }
+        this.generateHandlers.delete(job.id);
         job.status = 'failed';
         job.error = message?.message || `${message}`;
         this.saveQueue();
         this.renderQueue();
         this.pumpQueue();
+        return true;
     },
 
     /** Extracts workspace job metadata from a generated output or progress metadata string. */

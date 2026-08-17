@@ -1,0 +1,1 @@
+let videoWorkspaceHelper = new VideoWorkspaceHelper();

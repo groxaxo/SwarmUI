@@ -11,21 +11,34 @@ Object.assign(VideoWorkspaceHelper.prototype, {
         this.renderComponentSummary();
     },
 
-    /** Reads available backend IDs from the Exact Backend ID parameter. */
+    /** Reads enabled backend IDs and GPU assignments when exact-backend routing is permitted. */
     availableBackends() {
-        let param = gen_param_types.find(item => item.id == 'exactbackendid' || this.describeParam(item).includes('exact backend'));
-        let values = [];
-        let names = [];
-        if (param && param.values) {
-            values = [...param.values];
-            names = param.value_names ? [...param.value_names] : [...values];
+        let routeParam = gen_param_types.find(item => item.id == 'exactbackendid' || this.describeParam(item).includes('exact backend'));
+        if (!routeParam) {
+            return [];
         }
+        let output = [];
+        if (typeof backends_loaded != 'undefined') {
+            for (let backend of Object.values(backends_loaded)) {
+                if (!backend.enabled || backend.status == 'disabled' || backend.status == 'errored') {
+                    continue;
+                }
+                let gpu = backend.settings?.GPU_ID;
+                let title = backend.title || backend_types?.[backend.type]?.name || `Backend ${backend.id}`;
+                let details = [gpu ? `GPU ${gpu}` : null, backend.status].filter(value => value).join(', ');
+                output.push({ value: `${backend.id}`, name: `#${backend.id} ${title}${details ? ` (${details})` : ''}` });
+            }
+        }
+        if (output.length > 0) {
+            return output.sort((a, b) => parseInt(a.value) - parseInt(b.value));
+        }
+        let values = routeParam.values ? [...routeParam.values] : [];
+        let names = routeParam.value_names ? [...routeParam.value_names] : [...values];
         let elem = document.getElementById('input_exactbackendid');
-        if (elem && elem.options) {
+        if (elem?.options) {
             values = [...elem.options].map(option => option.value);
             names = [...elem.options].map(option => option.textContent);
         }
-        let output = [];
         for (let i = 0; i < values.length; i++) {
             let value = `${values[i]}`;
             if (!value || value.toLowerCase() == 'any' || value.toLowerCase() == 'auto') {

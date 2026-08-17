@@ -15,6 +15,10 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             this.dispatchJob(job);
             active++;
         }
+        if (active == 0 && !this.queue.some(job => job.status == 'queued')) {
+            this.queueRunning = false;
+            this.setStatus('Video queue complete.');
+        }
         this.updateQueueControls();
     },
 
@@ -116,6 +120,7 @@ Object.assign(VideoWorkspaceHelper.prototype, {
         job.error = message?.message || `${message}`;
         this.saveQueue();
         this.renderQueue();
+        this.setStatus(`'${job.name}' failed: ${job.error}`, true);
         this.pumpQueue();
         return true;
     },

@@ -3,7 +3,7 @@ Object.assign(VideoWorkspaceHelper.prototype, {
     /** Runs initialization after the Generate page DOM and core helpers are available. */
     initializeWhenReady() {
         let initialize = () => {
-            if (this.initialized || !document.getElementById('bottombartabcollection') || !document.getElementById('t2i_bottom_bar_content')) {
+            if (this.initialized || !document.getElementById('bottombartabcollection') || !document.getElementById('t2i_bottom_bar_content') || typeof gen_param_types == 'undefined' || !Array.isArray(gen_param_types) || !document.getElementById('input_model')) {
                 if (!this.initialized) {
                     setTimeout(initialize, 50);
                 }
@@ -15,6 +15,9 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             this.registerMediaActions();
             if (typeof postParamBuildSteps != 'undefined') {
                 postParamBuildSteps.push(() => this.refreshDynamicControls());
+            }
+            if (typeof backendsRevisedCallbacks != 'undefined') {
+                backendsRevisedCallbacks.push(() => this.refreshDynamicControls());
             }
             this.refreshDynamicControls();
             this.renderComponentPacks();

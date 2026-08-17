@@ -18,6 +18,7 @@
     - [Making Extensions](/docs/Making%20Extensions.md) explains how to make extensions.
     - TODO: Backends (what a 'backend' is, supported options, usage, etc)
         - [ComfyUI Backend Extension](/src/BuiltinExtensions/ComfyUIBackend/README.md)
+        - [ComfyUI Compatibility](/docs/ComfyUI%20Compatibility.md) for self-starting, external API, dependency, model-path, and multi-GPU guidance.
         - Legacy [Auto WebUI Backend Extension](/src/BuiltinExtensions/AutoWebUIBackend/README.md)
     - TODO: Tools (what a tool is, how to use em, etc)
         - [GridGenerator](/src/BuiltinExtensions/GridGenerator/README.md)

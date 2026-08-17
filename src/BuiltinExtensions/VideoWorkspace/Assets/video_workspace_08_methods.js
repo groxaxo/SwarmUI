@@ -75,8 +75,8 @@ Object.assign(VideoWorkspaceHelper.prototype, {
     /** Adds current generation settings to the editable workspace queue. */
     addCurrentToQueue(name = null) {
         let input = getGenInput();
-        if (!input.model) {
-            this.setStatus('Select a model before queueing the job.', true);
+        if (!input.model && !input.comfyworkflowraw && !input.comfyuicustomworkflow) {
+            this.setStatus('Select a model or custom ComfyUI workflow before queueing the job.', true);
             return;
         }
         let job = {

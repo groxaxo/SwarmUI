@@ -1,0 +1,20 @@
+{
+  "workflow": {
+    "id": "07824bbb-6672-4bb0-ac36-4313a519e35b",
+    "revision": 0,
+    "last_node_id": 404,
+    "last_link_id": 784,
+    "nodes": [
+      {"id":395,"type":"LoadImage","pos":[1420,6400],"size":[530,650],"flags":{},"order":0,"mode":0,"inputs":[],"outputs":[{"name":"IMAGE","type":"IMAGE","links":[764]},{"name":"MASK","type":"MASK","links":null}],"title":"Load First Frame","properties":{"cnr_id":"comfy-core","ver":"0.8.2","Node name for S&R":"LoadImage"},"widgets_values":["neon_cyborg_portrait.png","image"]},
+      {"id":75,"type":"SaveVideo","pos":[2540,6400],"size":[800,640],"flags":{"collapsed":false},"order":7,"mode":0,"inputs":[{"name":"video","type":"VIDEO","link":759}],"outputs":[{"name":"video","type":"VIDEO","links":null}],"properties":{"cnr_id":"comfy-core","ver":"0.5.1","Node name for S&R":"SaveVideo"},"widgets_values":["video/LTX-2.5_i2v","auto","auto"]},
+      {"id":398,"type":"6e397a2b-68f7-48f6-8930-f3a5491a163c","pos":[1990,6400],"size":[500,670],"flags":{},"order":6,"mode":0,"inputs":[{"label":"first_frame","name":"input","type":"IMAGE,MASK","link":764},{"label":"prompt","name":"value","type":"STRING","widget":{"name":"value"},"link":null},{"label":"prompt_enhance","name":"value_1","type":"BOOLEAN","widget":{"name":"value_1"},"link":null},{"label":"duration","name":"value_2","type":"INT","widget":{"name":"value_2"},"link":null},{"label":"width","name":"value_3","type":"INT","widget":{"name":"value_3"},"link":783},{"label":"height","name":"value_4","type":"INT","widget":{"name":"value_4"},"link":784},{"label":"frame_rate","name":"value_5","type":"INT","widget":{"name":"value_5"},"link":null},{"label":"video_vae","name":"vae_name","type":"COMBO","widget":{"name":"vae_name"},"link":null},{"label":"audio_vae","name":"vae_name_1","type":"COMBO","widget":{"name":"vae_name_1"},"link":null},{"label":"upscale_model","name":"model_name","type":"COMBO","widget":{"name":"model_name"},"link":null},{"label":"prompt_enhance_model","name":"clip_name_1","type":"COMBO","widget":{"name":"clip_name_1"},"link":null}],"outputs":[{"name":"VIDEO","type":"VIDEO","links":[759]}],"properties":{"cnr_id":"comfy-core","ver":"0.30.0","previewExposures":[]},"widgets_values":["Use the provided start image as the first frame. The cybernetic figure slowly turns his head to the right, his glowing blue eyes scanning the horizon, mechanical joints in his neck whirring faintly. The camera follows his gaze, panning across the rooftop to reveal the city beyond: a river of light winding between dark towers, a flying vehicle gliding past between the buildings, its lights streaking. He watches it pass, then his eyes narrow slightly. The camera settles on his profile against the city glow, distant hover traffic humming, wind gusting across the rooftop. No text, no black frames.",true,5,1280,720,875362541677469,24,"ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors","ltx-2.5-video-vae-bf16.safetensors","ltx-2.5-audio-vae-bf16.safetensors","gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors","ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors","gemma4_e2b_it_bf16.safetensors"]}
+    ],
+    "links": [[759,398,0,75,0,"VIDEO"],[764,395,0,398,0,"IMAGE"]],
+    "groups": [],
+    "config": {},
+    "extra": {},
+    "version": 0.4
+  },
+  "prompt": null,
+  "description": "Vendored from groxaxo/ltx-2.5 templates/video_ltx2_5_i2v.json at 0c60382b4d9d79a7b7abc2505e9f6c4a3c6f9879. Canonical LTX-2.5 image-to-video rolling-segment core promoted by that repo's workflow-library installer. Replace the bundled demo input image with your own first frame and ensure the named LTX-2.5 models are installed."
+}

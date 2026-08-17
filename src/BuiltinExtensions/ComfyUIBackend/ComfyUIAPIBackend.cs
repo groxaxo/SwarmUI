@@ -1,4 +1,5 @@
 using FreneticUtilities.FreneticDataSyntax;
+using Newtonsoft.Json.Linq;
 using SwarmUI.Backends;
 using SwarmUI.Core;
 using SwarmUI.DataHolders;
@@ -12,9 +13,9 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
     public class ComfyUIAPISettings : AutoConfiguration
     {
         /// <summary>Base web address of the ComfyUI instance.</summary>
-        [SuggestionPlaceholder(Text = "ComfyUI's address...")]
-        [ConfigComment("The address of the ComfyUI instance, for example 'http://127.0.0.1:8188'. A scheme is added automatically when omitted.")]
-        public string Address = "http://127.0.0.1:8188";
+        [SuggestionPlaceholder(Text = "ComfyUI's address, for example http://127.0.0.1:8188...")]
+        [ConfigComment("The address of the ComfyUI instance, for example 'http://127.0.0.1:8188'. A scheme is added automatically when omitted. Leave empty to disable this backend.")]
+        public string Address = "";
 
         /// <summary>Whether this backend may remain idle while its ComfyUI API is unavailable.</summary>
         [ConfigComment("Whether the backend is allowed to revert to an 'idle' state if the API address is unresponsive.\nAn idle state is not considered an error, but cannot generate.\nIt will automatically return to 'running' if the API becomes available.")]
@@ -24,9 +25,9 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
         [ConfigComment("How many extra requests may queue up on this backend while one is processing.")]
         public int OverQueue = 1;
 
-        /// <summary>Controls whether ComfyUI API requests use the current '/api' prefix or the legacy root routes.</summary>
-        [ConfigComment("Which ComfyUI API route style to use.\n'Auto Detect' prefers the current '/api' routes when available and falls back to legacy root routes.\nForce a mode only when a reverse proxy or older ComfyUI installation requires it.")]
-        [ManualSettingsOptions(Impl = null, Vals = ["Auto", "API", "Root"], ManualNames = ["Auto Detect", "Force /api Prefix", "Force Legacy Root"])]
+        /// <summary>Controls whether ComfyUI API requests use an '/api' prefix or root routes.</summary>
+        [ConfigComment("Which ComfyUI API route style to use.\nComfyUI 0.33.0 serves its native API at root routes. Some frontend development servers and reverse proxies expose the same API under '/api'.\n'Auto Detect' validates '/api/system_stats' as ComfyUI JSON and otherwise uses root routes. Force a mode only when the deployment requires it.")]
+        [ManualSettingsOptions(Impl = null, Vals = ["Auto", "API", "Root"], ManualNames = ["Auto Detect", "Force /api Prefix", "Force Root Routes"])]
         public string APIPathMode = "Auto";
 
         /// <summary>Legacy switch that forces the '/api' prefix for a ComfyUI frontend development server.</summary>
@@ -48,7 +49,7 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
             string address = Settings.Address?.Trim().TrimEnd('/') ?? "";
             if (string.IsNullOrWhiteSpace(address))
             {
-                address = "http://127.0.0.1:8188";
+                return "";
             }
             if (!address.Contains("://"))
             {
@@ -63,7 +64,14 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
     }
 
     /// <inheritdoc/>
-    public override string APIAddress => NormalizedAddress + (ResolvedUseAPIPrefix || Settings.EnableFrontendDev ? "/api" : "");
+    public override string APIAddress
+    {
+        get
+        {
+            string address = NormalizedAddress;
+            return string.IsNullOrWhiteSpace(address) ? "" : address + (ResolvedUseAPIPrefix || Settings.EnableFrontendDev ? "/api" : "");
+        }
+    }
 
     /// <inheritdoc/>
     public override string WebAddress => NormalizedAddress;
@@ -91,7 +99,40 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
         return !mode.Equals("API", StringComparison.OrdinalIgnoreCase) && !mode.Equals("Root", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>Resolves the preferred route style, probing the small system-stats endpoint when automatic discovery is enabled.</summary>
+    /// <summary>Probes the prefixed system-stats route and verifies that the response is ComfyUI JSON.</summary>
+    private async Task<bool> ProbeAPIPrefix()
+    {
+        string address = NormalizedAddress;
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return false;
+        }
+        using CancellationTokenSource cancel = Utilities.TimedCancel(TimeSpan.FromSeconds(10));
+        try
+        {
+            using HttpResponseMessage response = await HttpClient.GetAsync($"{address}/api/system_stats", cancel.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+            JObject stats = await NetworkBackendUtils.Parse<JObject>(response);
+            return stats["system"] is JObject system && !string.IsNullOrWhiteSpace(system["comfyui_version"]?.ToString());
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (SwarmReadableErrorException)
+        {
+            return false;
+        }
+        catch (OperationCanceledException) when (!Program.GlobalProgramCancel.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Resolves the preferred route style.</summary>
     private async Task<bool> ResolveUseAPIPrefix()
     {
         if (Settings.EnableFrontendDev)
@@ -111,20 +152,36 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
         {
             return true;
         }
-        using CancellationTokenSource cancel = Utilities.TimedCancel(TimeSpan.FromSeconds(10));
-        try
+        return await ProbeAPIPrefix();
+    }
+
+    /// <summary>Returns a human-readable label for the selected route style.</summary>
+    private string RouteLabel()
+    {
+        return ResolvedUseAPIPrefix ? "the /api prefix" : "root routes";
+    }
+
+    /// <summary>Allows an idle Auto Detect backend to re-evaluate its route style when reconnecting.</summary>
+    private void ConfigureIdleRouteRediscovery(bool autoPathMode)
+    {
+        if (!CanIdle || !autoPathMode || Idler is null)
         {
-            using HttpResponseMessage response = await HttpClient.GetAsync($"{NormalizedAddress}/api/system_stats", cancel.Token);
-            return response.IsSuccessStatusCode;
+            return;
         }
-        catch (HttpRequestException)
+        Idler.ValidateCall = () =>
         {
-            return false;
-        }
-        catch (OperationCanceledException) when (!Program.GlobalProgramCancel.IsCancellationRequested)
-        {
-            return false;
-        }
+            if (Status == BackendStatus.IDLE)
+            {
+                bool prior = ResolvedUseAPIPrefix;
+                ResolvedUseAPIPrefix = ResolveUseAPIPrefix().GetAwaiter().GetResult();
+                if (prior != ResolvedUseAPIPrefix)
+                {
+                    Logs.Debug($"ComfyUI API backend {BackendData.ID} changed auto-detected route style to {RouteLabel()} while reconnecting.");
+                }
+            }
+            using CancellationTokenSource cancel = Utilities.TimedCancel(TimeSpan.FromMinutes(1));
+            SendGet<JObject>("features", cancel.Token).GetAwaiter().GetResult();
+        };
     }
 
     /// <inheritdoc/>
@@ -132,23 +189,26 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
     {
         bool autoPathMode = IsAutoPathMode();
         ResolvedUseAPIPrefix = await ResolveUseAPIPrefix();
-        AddLoadStatus($"ComfyUI API route resolved to {(ResolvedUseAPIPrefix ? "the /api prefix" : "legacy root routes")}.");
+        if (!string.IsNullOrWhiteSpace(NormalizedAddress))
+        {
+            AddLoadStatus($"ComfyUI API route resolved to {RouteLabel()}.");
+        }
         try
         {
             await InitInternal(CanIdle);
         }
         catch (Exception ex) when (autoPathMode && ResolvedUseAPIPrefix && ex is not OperationCanceledException)
         {
-            AddLoadStatus("The prefixed ComfyUI API failed during initialization; retrying legacy root routes.");
+            AddLoadStatus("The prefixed ComfyUI API failed during initialization; retrying root routes.");
             ResolvedUseAPIPrefix = false;
             await InitInternal(CanIdle);
-            return;
         }
         if (autoPathMode && ResolvedUseAPIPrefix && Status != BackendStatus.RUNNING)
         {
-            AddLoadStatus("The prefixed ComfyUI API remained unavailable; retrying legacy root routes.");
+            AddLoadStatus("The prefixed ComfyUI API remained unavailable; retrying root routes.");
             ResolvedUseAPIPrefix = false;
             await InitInternal(CanIdle);
         }
+        ConfigureIdleRouteRediscovery(autoPathMode);
     }
 }

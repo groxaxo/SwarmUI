@@ -1,6 +1,6 @@
 /** Video Workspace method group 05. */
 Object.assign(VideoWorkspaceHelper.prototype, {
-    /** Shows a compact summary of the selected pack or current video-related components. */
+    /** Shows a compact summary of the selected pack or component categories ready to capture. */
     renderComponentSummary() {
         let target = document.getElementById('video-workspace-component-summary');
         if (!target) {
@@ -8,10 +8,16 @@ Object.assign(VideoWorkspaceHelper.prototype, {
         }
         let id = getRequiredElementById('video-workspace-pack-select').value;
         let pack = this.componentPacks.find(item => item.id == id);
-        let values = pack ? pack.values : this.captureComponentValues(this.selectedCategories());
-        let entries = Object.entries(values).slice(0, 18);
+        if (!pack) {
+            let categories = this.selectedCategories().map(category => this.categoryDefinitions.find(item => item.id == category)?.label || category);
+            target.innerHTML = categories.length > 0
+                ? `<span class="video-workspace-muted">Ready to capture: ${escapeHtml(categories.join(', '))}</span>`
+                : '<span class="video-workspace-muted">Select at least one component category.</span>';
+            return;
+        }
+        let entries = Object.entries(pack.values).slice(0, 18);
         if (entries.length == 0) {
-            target.innerHTML = '<span class="video-workspace-muted">No captured components yet.</span>';
+            target.innerHTML = '<span class="video-workspace-muted">This pack has no captured components.</span>';
             return;
         }
         target.innerHTML = entries.map(([key, value]) => {
@@ -122,6 +128,10 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             job.expectedOutputs = this.expectedOutputs(job.input);
             job.status = 'queued';
             job.error = null;
+            delete job.startedAt;
+            delete job.completedAt;
+            delete job.actualInput;
+            delete job.resolvedBackend;
             job.outputs = [];
             job.completedOutputs = 0;
             job.sessionOnly = this.containsInlineMedia(job.input);

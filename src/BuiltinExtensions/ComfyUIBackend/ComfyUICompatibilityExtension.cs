@@ -8,15 +8,15 @@ public class ComfyUICompatibilityExtension : Extension
     /// <summary>ComfyUI release used as the compatibility baseline for this manifest.</summary>
     public const string CompatibleComfyUIVersion = "0.33.0";
 
-    /// <summary>ComfyUI frontend package version validated with the compatibility baseline.</summary>
-    public const string ValidatedFrontendVersion = "1.49.6";
+    /// <summary>ComfyUI frontend package version targeted by the compatibility baseline.</summary>
+    public const string TargetFrontendVersion = "1.49.6";
 
     /// <inheritdoc/>
     public override void OnFirstInit()
     {
-        ComfyUISelfStartBackend.SwarmValidatedFrontendVersion = ValidatedFrontendVersion;
+        ComfyUISelfStartBackend.SwarmValidatedFrontendVersion = TargetFrontendVersion;
 
-        UpsertRequiredPackage("comfyui_frontend_package", $"comfyui-frontend-package=={ValidatedFrontendVersion}");
+        UpsertRequiredPackage("comfyui_frontend_package", $"comfyui-frontend-package=={TargetFrontendVersion}");
         UpsertRequiredPackage("einops", "einops");
         UpsertRequiredPackage("tokenizers", "tokenizers");
         UpsertRequiredPackage("safetensors", "safetensors");

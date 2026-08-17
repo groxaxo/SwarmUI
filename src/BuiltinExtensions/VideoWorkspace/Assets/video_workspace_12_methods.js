@@ -25,8 +25,13 @@ Object.assign(VideoWorkspaceHelper.prototype, {
                 outputs: [],
                 error: null,
                 completedOutputs: 0,
+                progress: 0,
                 createdAt: Date.now()
             };
+            delete copy.startedAt;
+            delete copy.completedAt;
+            delete copy.actualInput;
+            delete copy.resolvedBackend;
             this.queue.splice(this.queue.indexOf(job) + 1, 0, copy);
         }
         else if (action == 'retry') {
@@ -35,6 +40,10 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             job.outputs = [];
             job.completedOutputs = 0;
             job.progress = 0;
+            delete job.startedAt;
+            delete job.completedAt;
+            delete job.actualInput;
+            delete job.resolvedBackend;
         }
         else if (action == 'up' || action == 'down') {
             let index = this.queue.indexOf(job);
@@ -66,7 +75,7 @@ Object.assign(VideoWorkspaceHelper.prototype, {
         this.renderQueue();
     },
 
-    /** Requeues selected jobs and starts dispatch. */
+    /** Requeues selected jobs, moves them to the front, and starts dispatch. */
     runSelected() {
         let jobs = this.queue.filter(job => this.selectedJobs.has(job.id) && !['running', 'submitting'].includes(job.status));
         if (jobs.length == 0) {
@@ -79,7 +88,13 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             job.outputs = [];
             job.completedOutputs = 0;
             job.progress = 0;
+            delete job.startedAt;
+            delete job.completedAt;
+            delete job.actualInput;
+            delete job.resolvedBackend;
         }
+        let selectedIds = new Set(jobs.map(job => job.id));
+        this.queue = [...this.queue.filter(job => selectedIds.has(job.id)), ...this.queue.filter(job => !selectedIds.has(job.id))];
         this.queueRunning = true;
         this.saveQueue();
         this.renderQueue();

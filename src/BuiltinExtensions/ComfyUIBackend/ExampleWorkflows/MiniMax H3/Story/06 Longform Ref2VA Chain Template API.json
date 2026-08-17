@@ -1,0 +1,13 @@
+{
+  "workflow": null,
+  "prompt": {
+    "1":{"class_type":"MiniMaxH3LoaderSafetensorsBlockMultiGPU","inputs":{"unet_name":"Ref2VA/MiniMax-H3_Ref2VA-INT8-ConvRot-HQ.safetensors","weight_dtype":"default","compute_device":"cuda:1","virtual_vram_gb":0.0,"donor_device":"cuda:2","expert_mode_allocations":"cuda:1,18gb;cuda:2,*","eject_models":true},"_meta":{"title":"H3 Ref2VA INT8 ConvRot HQ — GPU 1 primary, GPU 2 phase-shared donor"}},
+    "2":{"class_type":"CLIPLoaderDisTorch2MultiGPU","inputs":{"clip_name":"qwen3vl_32b_minimax_h3_ultra_uncensored_heretic_int8_convrot.safetensors","type":"minimax","device":"cuda:2","virtual_vram_gb":0.0,"donor_device":"cuda:1","expert_mode_allocations":"cuda:2,20gb;cuda:1,*","eject_models":true},"_meta":{"title":"Qwen3-VL-32B uncensored INT8 ConvRot — GPU 2 primary"}},
+    "3":{"class_type":"VAELoaderMultiGPU","inputs":{"vae_name":"minimax_h3_video_vae_fp16.safetensors","device":"cuda:0"}},
+    "4":{"class_type":"VAELoaderMultiGPU","inputs":{"vae_name":"minimax_h3_audio_vae_fp32.safetensors","device":"cuda:0"}},
+    "5":{"class_type":"H3MultishotSampler","inputs":{"model":["1",0],"clip":["2",0],"video_vae":["3",0],"audio_vae":["4",0],"script":"PIPELINE_REPLACES_THIS_PROMPT","shot_count":1,"width":736,"height":416,"frames_per_shot":362,"seed":157987240705331,"steps":20,"seed_per_shot":true,"sampler_name":"res_multistep","scheduler":"simple","self_anchor_voice":false,"two_pass_upscale":false,"upscale_factor":1.5,"pass1_fraction":0.4,"upscale_audio_denoise":0.35,"reference_image_size":"match","preview_first_shot":true,"chain_gain_control":"off"},"_meta":{"title":"Long-form Ref2VA chain — persistent reference plus terminal-frame handoff"}},
+    "6":{"class_type":"CreateVideo","inputs":{"images":["5",0],"fps":24.0,"audio":["5",1],"bit_depth":8}},
+    "7":{"class_type":"SaveVideo","inputs":{"video":["6",0],"filename_prefix":"video/minimax-h3/story/pipeline-placeholder","format":"mp4","codec":"h264"}}
+  },
+  "description":"Vendored from groxaxo/minimax-h3 workflows/story/06-longform-ref2va-chain-template-api.json at aad0f45d5848297ef5569392c6f930f628ec3d65. Story-pipeline Ref2VA atom template; replace PIPELINE_REPLACES_THIS_PROMPT before queueing."
+}

@@ -4,8 +4,9 @@
 - [Why Use Swarm](/docs/Why%20Use%20Swarm.md) to see what advanced Swarm offers you
 - [Advanced Usage](/docs/Advanced%20Usage.md) for various advanced usage topics (use from external device, comfy workflows, ...)
 - [Features](/docs/Features/README.md) for a sub-listing of various specific Swarm features and how to use them.
+    - [Custom Comfy Workflows](/docs/Features/Comfy-Workflows.md) covers the bundled workflow library, including the pinned MiniMax H3 and LTX 2.5 defaults.
 - Environment related docs:
-    - [Docker](/docs/Docker.md) for using SwarmUI inside a Docker container.
+    - [Docker](/docs/Docker.md) for using SwarmUI inside a Docker container, including the three-GPU video-workflow example configuration.
     - [Using More GPUs](/docs/Using%20More%20GPUs.md) for more info about splitting generations between multiple GPUs.
     - [Sharing Your Swarm](/docs/Sharing%20Your%20Swarm.md) for info about sharing your SwarmUI instance with others.
     - [AMD Radeon GPUs](/docs/AMD%20Radeon%20GPUs.md) for more info about using an AMD graphics card with SwarmUI.

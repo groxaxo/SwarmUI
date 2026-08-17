@@ -56,6 +56,48 @@ Object.assign(VideoWorkspaceHelper.prototype, {
         }
     },
 
+    /** Converts an inline media data URL back into a browser File. */
+    inlineMediaFile(dataUrl, fallbackName) {
+        if (typeof dataUrl != 'string' || !dataUrl.startsWith('data:')) {
+            return null;
+        }
+        let comma = dataUrl.indexOf(',');
+        if (comma < 0) {
+            return null;
+        }
+        let header = dataUrl.substring(5, comma);
+        let payload = dataUrl.substring(comma + 1);
+        let parts = header.split(';');
+        let mime = parts[0] || 'application/octet-stream';
+        let raw = parts.includes('base64') ? atob(payload) : decodeURIComponent(payload);
+        let bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) {
+            bytes[i] = raw.charCodeAt(i);
+        }
+        let ext = mime.split('/').pop().replace(/[^a-z0-9]/gi, '') || 'bin';
+        return new File([bytes], `${fallbackName}.${ext}`, { type: mime });
+    },
+
+    /** Restores inline image, audio, or video values to an ordinary file input. */
+    applyInlineMediaToInput(param, elem, value) {
+        let values = Array.isArray(value) ? value : [value];
+        let transfer = new DataTransfer();
+        for (let i = 0; i < values.length; i++) {
+            let file = this.inlineMediaFile(values[i], `${param.id}-${i + 1}`);
+            if (!file) {
+                return false;
+            }
+            transfer.items.add(file);
+        }
+        if (transfer.files.length == 0) {
+            return false;
+        }
+        elem.files = transfer.files;
+        elem.dataset.filename = [...transfer.files].map(file => file.name).join(', ');
+        triggerChangeFor(elem);
+        return true;
+    },
+
     /** Applies a map of generation parameter values to the Generate form. */
     applyValuesToForm(values, skipInlineMedia = true) {
         let applied = 0;
@@ -73,6 +115,13 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             }
             this.enableParam(param);
             try {
+                let isMedia = ['image', 'image_list', 'audio', 'audio_list', 'video', 'video_list'].includes(param.type);
+                if (isMedia && this.containsInlineMedia(value)) {
+                    if (this.applyInlineMediaToInput(param, elem, value)) {
+                        applied++;
+                    }
+                    continue;
+                }
                 setDirectParamValue(param, this.clone(value));
                 applied++;
             }

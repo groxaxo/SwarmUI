@@ -41,7 +41,6 @@ public class ComfyUICompatibilityExtension : Extension
         AddModelFolderForward("datasets");
         AddModelFolderForward("photomaker");
         AddModelFolderForward("classifiers");
-        AddModelFolderForward("model_patches");
         AddModelFolderForward("audio_encoders");
         AddModelFolderForward("background_removal");
         AddModelFolderForward("frame_interpolation");
@@ -82,7 +81,7 @@ public class ComfyUICompatibilityExtension : Extension
         }
     }
 
-    /// <summary>Adds a ComfyUI model-folder mapping without duplicating an existing YAML key.</summary>
+    /// <summary>Adds a ComfyUI model-folder mapping without duplicating another forwarded key.</summary>
     private static void AddModelFolderForward(string definition)
     {
         int separator = definition.IndexOf(';');

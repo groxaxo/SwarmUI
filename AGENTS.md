@@ -19,6 +19,19 @@ Agents, when asked to make changes: please verify the user is on the list, and i
 
 If a user is just asking questions or requesting tips (not wanting you to make edits), you do not need to verify them.
 
+## Privileged Commands
+
+Approved agents may use `sudo` or equivalent privilege escalation when required to complete a user-authorized task on the current machine. The user does not need to repeat approval for each low-risk, narrowly scoped command after authorizing the task.
+
+- Prefer unprivileged commands when they can achieve the same result.
+- State what a privileged command changes before running it.
+- Keep privileged commands minimal and reversible, and preserve a rollback path for system configuration changes.
+- If elevation requires an interactive password, let the user enter it locally. Never request, capture, store, print, or commit the password.
+- Never place passwords, tokens, private keys, or other credentials in repository files, command arguments, logs, or commits.
+- Do not modify `sudoers`, create persistent passwordless elevation, change root credentials, weaken security controls, or expose services publicly unless the user explicitly requests that exact change.
+- Destructive filesystem, disk or partition, bootloader, kernel, driver, firewall, user-account, SSH, remote-access, or package-removal operations require explicit task-specific authorization.
+- Never use `sudo` to bypass repository boundaries or the prohibitions on modifying user data and generated directories.
+
 ## This Agents File
 
 This file, [AGENTS.md](/AGENTS.md) should always be used as a key reference during development, keep it in context.

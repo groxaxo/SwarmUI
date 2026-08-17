@@ -7,6 +7,10 @@ Object.assign(VideoWorkspaceHelper.prototype, {
             return;
         }
         let action = button.dataset.action;
+        if (['running', 'submitting'].includes(job.status) && ['retry', 'up', 'down', 'delete'].includes(action)) {
+            this.setStatus(`'${job.name}' is active. Cancel it before changing queue state.`, true);
+            return;
+        }
         if (action == 'edit') {
             let applied = this.applyValuesToForm(job.input, false);
             this.openWorkspace();
@@ -86,7 +90,10 @@ Object.assign(VideoWorkspaceHelper.prototype, {
     /** Cancels the workspace generation session and marks active jobs cancelled. */
     cancelRunning() {
         this.queueRunning = false;
-        this.generateHandler.doInterrupt();
+        for (let handler of this.generateHandlers.values()) {
+            handler.interrupted = handler.batchesEver;
+        }
+        doInterrupt();
         let cancelled = 0;
         for (let job of this.queue) {
             if (['running', 'submitting'].includes(job.status)) {
@@ -95,6 +102,7 @@ Object.assign(VideoWorkspaceHelper.prototype, {
                 cancelled++;
             }
         }
+        this.generateHandlers.clear();
         this.saveQueue();
         this.renderQueue();
         this.updateQueueControls();

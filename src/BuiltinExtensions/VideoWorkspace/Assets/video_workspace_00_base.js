@@ -1,9 +1,10 @@
 /** Dedicated generation handler that submits captured inputs exactly as queued, without inheriting the live form. */
 class VideoWorkspaceGenerateHandler extends GenerateHandler {
 
-    constructor(workspace) {
+    constructor(workspace, jobId) {
         super();
         this.workspace = workspace;
+        this.jobId = jobId;
         this.validateModel = false;
         this.pendingImageCount = 1;
     }
@@ -26,14 +27,15 @@ class VideoWorkspaceGenerateHandler extends GenerateHandler {
 
     /** Forwards queue lifecycle data before the standard output UI consumes it. */
     internalHandleData(data, images, discardable, timeLastGenHit, actualInput, socketId, socket, isPreview, batch_id) {
-        this.workspace.handleGenerationData(data);
+        this.workspace.handleGenerationData(data, this.jobId);
         return super.internalHandleData(data, images, discardable, timeLastGenHit, actualInput, socketId, socket, isPreview, batch_id);
     }
 
-    /** Associates an unscoped queue-handler error with the oldest active workspace job. */
+    /** Associates an unscoped queue-handler error with this exact workspace job. */
     hadError(msg) {
-        this.workspace.handleQueueHandlerError(msg);
-        super.hadError(msg);
+        if (!this.workspace.handleQueueHandlerError(msg, this.jobId)) {
+            super.hadError(msg);
+        }
     }
 }
 
@@ -55,7 +57,7 @@ class VideoWorkspaceHelper {
         this.selectedJobs = new Set();
         this.sourceVideo = null;
         this.initialized = false;
-        this.generateHandler = new VideoWorkspaceGenerateHandler(this);
+        this.generateHandlers = new Map();
         this.categoryDefinitions = [
             { id: 'prompts', label: 'Prompts' },
             { id: 'models', label: 'Models' },

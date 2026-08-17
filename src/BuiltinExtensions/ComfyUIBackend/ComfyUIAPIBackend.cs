@@ -1,5 +1,6 @@
 using FreneticUtilities.FreneticDataSyntax;
 using SwarmUI.Backends;
+using SwarmUI.Core;
 using SwarmUI.DataHolders;
 using SwarmUI.Utils;
 using System.Net.Http;
@@ -120,7 +121,7 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
         {
             return false;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!Program.GlobalProgramCancel.IsCancellationRequested)
         {
             return false;
         }

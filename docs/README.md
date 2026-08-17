@@ -4,6 +4,7 @@
 - [Why Use Swarm](/docs/Why%20Use%20Swarm.md) to see what advanced Swarm offers you
 - [Advanced Usage](/docs/Advanced%20Usage.md) for various advanced usage topics (use from external device, comfy workflows, ...)
 - [Features](/docs/Features/README.md) for a sub-listing of various specific Swarm features and how to use them.
+    - [Video Workspace](/docs/Features/Video-Workspace.md) for component packs, video recreation/remixing, queued jobs, and multi-GPU backend routing.
 - Environment related docs:
     - [Docker](/docs/Docker.md) for using SwarmUI inside a Docker container.
     - [Using More GPUs](/docs/Using%20More%20GPUs.md) for more info about splitting generations between multiple GPUs.

@@ -93,7 +93,7 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
     /// <summary>Resolves the preferred route style, probing the small system-stats endpoint when automatic discovery is enabled.</summary>
     private async Task<bool> ResolveUseAPIPrefix()
     {
-        if (Settings.EnableFrontendDev || AddressIncludesAPIPrefix())
+        if (Settings.EnableFrontendDev)
         {
             return true;
         }
@@ -105,6 +105,10 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
         if (mode.Equals("Root", StringComparison.OrdinalIgnoreCase))
         {
             return false;
+        }
+        if (AddressIncludesAPIPrefix())
+        {
+            return true;
         }
         using CancellationTokenSource cancel = Utilities.TimedCancel(TimeSpan.FromSeconds(10));
         try
@@ -132,7 +136,7 @@ public class ComfyUIAPIBackend : ComfyUIAPIAbstractBackend
         {
             await InitInternal(CanIdle);
         }
-        catch (Exception) when (autoPathMode && ResolvedUseAPIPrefix)
+        catch (Exception ex) when (autoPathMode && ResolvedUseAPIPrefix && ex is not OperationCanceledException)
         {
             AddLoadStatus("The prefixed ComfyUI API failed during initialization; retrying legacy root routes.");
             ResolvedUseAPIPrefix = false;

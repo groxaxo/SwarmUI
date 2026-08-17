@@ -94,7 +94,7 @@ Object.assign(VideoWorkspaceHelper.prototype, {
                         </div>
                         <div class="video-workspace-actions compact">
                             <button class="basic-button" id="video-workspace-start-queue">Start Queue</button>
-                            <button class="basic-button" id="video-workspace-run-selected">Run Selected</button>
+                            <button class="basic-button" id="video-workspace-run-selected">Prioritize Selected</button>
                             <button class="basic-button danger-button" id="video-workspace-cancel-running">Cancel Running</button>
                             <button class="basic-button" id="video-workspace-select-all">Select All</button>
                             <button class="basic-button" id="video-workspace-clear-completed">Clear Finished</button>

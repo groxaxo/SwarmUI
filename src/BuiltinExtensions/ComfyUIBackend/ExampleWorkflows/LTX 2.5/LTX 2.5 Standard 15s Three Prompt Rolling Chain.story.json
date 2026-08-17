@@ -1,0 +1,17 @@
+{
+  "workflow": null,
+  "prompt": null,
+  "custom_params": {
+    "schema_version": 1,
+    "title": "LTX 2.5 standard 15 second three prompt scene",
+    "output_slug": "ltx25-standard-15s-three-prompt",
+    "input_frame": "/ABSOLUTE/PATH/TO/YOUR/START-FRAME.png",
+    "continuity_anchor": "Use the supplied visual context as the exact starting state. Preserve subject identity, faces, anatomy, hair, clothing, objects, environment, composition, lighting, colour palette, lens, camera position, depth of field, and visual style. Do not reset, redesign, duplicate, remove, or add anything unless explicitly requested. Continue naturally as one coherent uninterrupted shot with synchronized natural audio.",
+    "segments": [
+      {"prompt":"PROMPT ONE HERE","seed":250001},
+      {"prompt":"PROMPT TWO HERE","seed":250002},
+      {"prompt":"PROMPT THREE HERE","seed":250003}
+    ]
+  },
+  "description": "Vendored from groxaxo/ltx-2.5 examples/ltx25-standard-15s-three-prompt-chain.json at 0c60382b4d9d79a7b7abc2505e9f6c4a3c6f9879. This is the canonical three-prompt rolling-chain story specification promoted by the LTX workflow-library installer. It is a story-chain definition rather than a directly queueable Comfy API graph: replace the absolute input path and all three prompt placeholders, then use it with the LTX rolling-chain tooling documented in SwarmUI."
+}

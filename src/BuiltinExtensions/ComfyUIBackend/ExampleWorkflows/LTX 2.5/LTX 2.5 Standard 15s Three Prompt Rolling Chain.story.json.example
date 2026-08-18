@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "title": "LTX 2.5 standard 15 second three prompt scene",
+  "output_slug": "ltx25-standard-15s-three-prompt",
+  "input_frame": "/ABSOLUTE/PATH/TO/YOUR/START-FRAME.png",
+  "continuity_anchor": "Use the supplied visual context as the exact starting state. Preserve subject identity, faces, anatomy, hair, clothing, objects, environment, composition, lighting, colour palette, lens, camera position, depth of field, and visual style. Do not reset, redesign, duplicate, remove, or add anything unless explicitly requested. Continue naturally as one coherent uninterrupted shot with synchronized natural audio.",
+  "segments": [
+    {
+      "prompt": "PROMPT ONE HERE",
+      "seed": 250001
+    },
+    {
+      "prompt": "PROMPT TWO HERE",
+      "seed": 250002
+    },
+    {
+      "prompt": "PROMPT THREE HERE",
+      "seed": 250003
+    }
+  ],
+  "_provenance": {
+    "repository": "groxaxo/ltx-2.5",
+    "commit": "0c60382b4d9d79a7b7abc2505e9f6c4a3c6f9879",
+    "source": "examples/ltx25-standard-15s-three-prompt-chain.json",
+    "note": "Orchestration descriptor; intentionally ignored by SwarmUI's *.json workflow scanner because the filename ends in .json.example."
+  }
+}

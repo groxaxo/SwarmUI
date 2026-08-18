@@ -1,129 +1,105 @@
-# Using SwarmUI in Docker
+# Docker
 
-This document explains why and how to use SwarmUI in a Docker container. This is primarily intended for advanced users. If you've never used a Linux terminal before, this is likely too complicated for you.
+There are two Dockerfiles currently: [`launchtools/StandardDockerfile.docker`](/launchtools/StandardDockerfile.docker) and [`launchtools/Experimental-Dockerfile.docker`](/launchtools/Experimental-Dockerfile.docker).
 
-# Table of Contents
+The Standard Dockerfile is a general-purpose SwarmUI image. The example Compose file is [`launchtools/example-docker-compose.yml`](/launchtools/example-docker-compose.yml).
 
-- [Why Use Docker](#why-use-docker)
-- [Options](#options)
-    - [Standard Contained Installation](#standard-contained-installation)
-    - [Open Passthrough Installation](#open-passthrough-installation)
-    - [Customizing](#customizing)
-    - [Which To Pick](#which-to-pick)
-- [How To](#how-to)
-    - [Linux](#linux)
-    - [Windows](#windows)
-    - [Mac](#mac)
-- [Docker Compose](#docker-compose)
-- [Advanced Usage, Notes, Troubleshooting](#advanced-usage-notes-troubleshooting)
+## Standard Compose quick start
 
-# Why Use Docker
+From the SwarmUI repository root:
 
-**What is Docker?** [Docker](https://www.docker.com/) is a containerization tool: That is, it lets you run software in a "restricted container" - a virtual machine inside your computer, a separation layer between where the software is running, and where everything else is running.
+```bash
+HOST_UID="$(id -u)" HOST_GID="$(id -g)" \
+SWARM_GPU_COUNT=3 \
+docker compose -f launchtools/example-docker-compose.yml up --build
+```
 
-**What is the actual practical benefit?** Security, mainly. If anything unwanted happens inside your Swarm instance, it's limited to that container, and you can easily cut it off, and trust with decent confidence\* that it didn't access anything outside.
+Open SwarmUI on port `7801` after startup.
 
-\*(Docker is not a guarantee, it just makes it a lot harder for malicious activity to escape. A targeted attack for example might escape through internal network access.)
+The Compose example defaults to **three NVIDIA GPUs** because the bundled MiniMax H3 Ampere workflows explicitly reference `cuda:0`, `cuda:1`, and `cuda:2`. If you are not using those workflows, override the count to match your host:
 
-**Does this mean Swarm is unsafe?** Well, no. Swarm is safe. ... Buuuut, Swarm does not stand up all by itself. Swarm depends on a ComfyUI backend. ComfyUI depends on python3, and a variety of python packages. You might install custom nodes from any number of third party developers. Those nodes, in turn, depend on a variety of other python packages. The risk here is referred to as a "supply chain attack": The software you're trying to use, Swarm, is safe, but a dependency of a dependency of a dependency might be maintained by [some random person from Nebraska who has been thanklessly maintaining it since 2003](https://xkcd.com/2347/), and that guy might have his account taken over, and malware slipped into his project. This is rare, but it has happened, and has even happened to projects depended on by Comfy & Swarm users ([see for example Ultralytics breach notes here](https://github.com/mcmonkeyprojects/SwarmUI/releases/tag/0.9.4.0-Beta) - this attack thankfully ended up damaging zero of our users, and was detected & addressed by Swarm & Comfy developers within hours, but it hurt non-Swarm-users, and the next attack might not leave us so lucky).
+```bash
+SWARM_GPU_COUNT=1 docker compose -f launchtools/example-docker-compose.yml up --build
+```
 
-**So doing this Docker thingy makes it safe?** Well not entirely, but mostly yeah. Docker removes the majority of available attack surface, but nothing is ever a guarantee. Even with a Docker setup, always only install extensions or custom nodes from respected well known developers to minimize risk. This is also not a substitute for practicing good security in general (backup your important files externally, don't reuse passwords between sites, always use TFA, etc. -- when all is done well, even a successful hack targeting you can't do you too much harm). See also Docker's security documentation: https://docs.docker.com/engine/security/
+The host must have a working NVIDIA driver and NVIDIA Container Toolkit configuration for GPU reservations to work. The Compose file does not install or alter host drivers.
 
-**Are there alternatives to Docker?** Yes! There's plenty of containerization methods, Docker is just a well known one that Swarm has references for. If you're paranoid, you might use an entirely different machine for anything private/secure (such as accessing your bank accounts or whatever) from where you run general local software (anything like Swarm or other AI tools included). If you're on Windows and don't want to split your machine or deal with Docker, there's other "sandbox" tools such as [Sandboxie](https://sandboxie-plus.com/) that oughtta work as well.
+## Persistent data
 
-**Any bonus perks of Docker?** A few. Some better control over the process, some general management perks, better assurance of privacy, the ability to destroy your instance data and remake it quickly (like a reinstall but easier, for if you're the type of person to break your install often). On Windows you may end up with slightly faster backend performance (thanks to everything just kinda running better with Linux drivers than Windows ones). On Linux it may make for a more reliable installation since Swarm will have independence from any global package installs (you don't have to worry about your global python install if Swarm has a container with its own python install).
+The example Compose configuration separates application code from persistent user state:
 
-# Options
+- `swarmdata` → `/SwarmUI/Data`
+- `swarmbackend` → `/SwarmUI/dlbackend`
+- `swarmdlnodes` → `/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/DLNodes`
+- `swarmextensions` → `/SwarmUI/src/Extensions`
+- `./Models` → `/SwarmUI/Models`
+- `./Output` → `/SwarmUI/Output`
+- `./src/BuiltinExtensions/ComfyUIBackend/CustomWorkflows` → persistent user workflow library
 
-## Standard Contained Installation
+Keep the `CustomWorkflows` bind mount if you want workflow edits and deletions to survive an image rebuild.
 
-The standard contained installation will precompile Swarm in the build stage, and create independent persistent volumes for `Data` and `dlbackend`, as well as forwarding `Models` and `Output` folders directly.
+## Bundled workflow library
 
-This makes it easy to run multiple instances from one Swarm install, but is a bit more annoying for if you need to directly access the underlying files.
+The Standard image now contains the repository's built-in workflow examples under:
 
-## Open Passthrough Installation
+```text
+/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/ExampleWorkflows
+```
 
-The "open passthrough" container installation will simply run Swarm in-place, but as a container. This is a bit less rigid and proper, but may be more convenient for personal usage.
+This includes:
 
-It should still be relatively secure, but a targeted attack could mess with things (eg alter the docker files to cause a problem on next launch).
+- the existing Basic SDXL example;
+- eight pinned MiniMax H3 workflow presets/templates from `groxaxo/minimax-h3`;
+- the canonical LTX 2.5 workflow-library entries selected by `groxaxo/ltx-2.5`.
 
-You probably shouldn't do a passthrough of a pre-existing install unless you know what you're doing, as the python environment is likely to be corrupted - the container and the host cannot share control of a python env folder without something going haywire.
+SwarmUI copies an example into `CustomWorkflows/Examples` only when that user-state copy does not already exist. Consequently:
 
-Be aware that the permissions on files may be weird, as the container will treat files as owned by root, so if you want to access them from host you'll have to use `sudo chown yournamehere:yournamehere -R ./` first (won't break anything in the container).
+- rebuilding the image makes newly bundled examples available;
+- a locally edited workflow is not silently overwritten;
+- a workflow explicitly deleted through SwarmUI remains deleted via its marker;
+- Docker startup does not need credentials to the private MiniMax H3 or LTX repositories.
 
-Open Passthrough is very much not recommended on Windows, the Linux+Windows interaction in a folder will lead to weird results, use at your own risk.
+See [Custom Comfy Workflows](/docs/Features/Comfy-Workflows.md) for the exact source pins, workflow formats, and model/node requirements.
 
-## Customizing
+## MiniMax H3 Docker topology
 
-If you have more specific needs, such as alternate folders to forward (eg if you have models on a different drive) or forward alternate ports or etc, you can simply copy the `launch-standard-docker.sh` or `launch-open-docker.sh` file, name your copy `custom-launch-docker.sh`, and put whatever modifications you want inside (do not edit the original script, to avoid git conflicts). Then, of course, simply use your edited copy.
+The bundled Ampere presets are authored for a single ComfyUI process that can see three GPUs and internally assigns work among them. They use explicit device strings such as:
 
-You shouldn't need to edit the Dockerfiles, the difference between Standard vs Open is just Standard copies in source files, and Open does not, so pick whichever of the two makes more sense for your situation.
+```text
+cuda:0
+cuda:1
+cuda:2
+```
 
-You can mount a models directory with `:ro` on the end to make it readonly. Just be sure to disable "Model Metadata Per Folder" in server configuration if you mount a Models folder this way, and understand that "Edit Metadata" won't work if you do this.
+Therefore, for those presets:
 
-## Which To Pick
+1. expose three GPUs to the SwarmUI/ComfyUI container;
+2. use a Comfy self-start backend whose process inherits those three visible devices;
+3. do not combine the preset with a one-backend-per-GPU topology unless you rewrite its internal CUDA assignments.
 
-If in doubt, go with Standard, that's why it's named that. But if Open sounds right for you, go for it. Or, if you know what you're doing with Docker and want to maximize security and control, make your own docker container. The docker files include here should serve as great starting point examples.
+This is different from ordinary SwarmUI throughput scaling, where one self-starting backend per GPU is often preferable. The [ComfyUI Compatibility](/docs/ComfyUI%20Compatibility.md) runbook covers that topology separately.
 
-# How To
+## LTX 2.5 Docker notes
 
-The steps are similar for all OS's, with different setup requirements.
+The LTX 2.5 default library is also baked into the image. The workflow JSON does **not** bundle the large model weights. Mount the required models under `./Models` using the folder categories referenced by the workflow, such as `diffusion_models`, `vae`, `text_encoders`, and `latent_upscale_models`.
 
-In all cases you don't need to be an expert, but will need a bit of familiarity with basic operation of a command line interface. Unfortunately Docker is not quite "plug-n-play", but it's getting close.
+The LTX rolling-chain story specification contains an input-frame path placeholder. Replace it with a path accessible to the running workflow before execution.
 
-## Linux
+## External ComfyUI
 
-- Install Docker Engine for Linux: https://docs.docker.com/engine/install/
-    - You don't need Docker Desktop, just the Engine
-- Follow the Docker Linux post-install steps to ensure you can operate Docker from a user account instead of root: https://docs.docker.com/engine/install/linux-postinstall/
-    - (Optional) if you want to further refine your security, you can configure Docker rootless mode: https://docs.docker.com/engine/security/rootless/
-        - Rootless has known unresolved issues in base Docker currently. I do not recommend using it until these are patched.
-        - If you must, you'll need to maintain modified copies of the docker scripts that remove the `--user` inputs (ie rootless docker currently requires you run as root inside the container. This is obviously not good, thus the advice to not use rootless for now. See https://github.com/mamba-org/micromamba-docker/issues/407#issuecomment-2088523507 for info.)
-- Install and enable NVIDIA Container toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
-- Install `git`
-- Download Swarm via git: `git clone https://github.com/mcmonkeyprojects/SwarmUI`
-- cd `SwarmUI`
-- Run `./launchtools/launch-standard-docker.sh` or `./launchtools/launch-open-docker.sh`. Do not give it any CLI args.
-- Open a browser to http://localhost:7801
+If SwarmUI should connect to a ComfyUI process outside the container, uncomment `network_mode: host` on Linux or otherwise provide a routable host/container address. Then configure a **ComfyUI API** backend in SwarmUI. Be aware that host networking changes the container's network isolation model.
 
-## Windows
+## Rebuilding after workflow updates
 
-- Install Docker Desktop for Windows: https://docs.docker.com/desktop/setup/install/windows-install/
-    - Be warned this has a lot of prerequisites, including BIOS settings and Windows WSL2 activation. Be prepared for a long and annoying process if you've never done this before. Sorry.
-    - It's also pretty buggy from my own testing. (Maybe a Docker expert can help improve this?)
-- Install git from https://git-scm.com/download/win
-- open a terminal to the folder you want swarm in and run `git clone https://github.com/mcmonkeyprojects/SwarmUI`
-- Open the `launchtools` folder and doubleclick either `windows-standard-docker.bat` or `windows-open-docker.bat`
-- Open a browser to http://localhost:7801
+After pulling a SwarmUI commit that updates bundled examples:
 
-## Mac
+```bash
+docker compose -f launchtools/example-docker-compose.yml build --no-cache swarmui
+docker compose -f launchtools/example-docker-compose.yml up -d swarmui
+```
 
-Mac information is currently untested, but presumed to work fairly similar to Linux as long as you get Docker installed on your Mac per Docker's documentation.
+A fresh user-state directory receives all bundled examples. Existing `CustomWorkflows` content remains authoritative and is not clobbered.
 
-- Install Docker Desktop for Mac: https://docs.docker.com/desktop/setup/install/mac-install/
-- Install `git`
-- Download Swarm via git: `git clone https://github.com/mcmonkeyprojects/SwarmUI`
-- cd `SwarmUI`
-- Run `./launchtools/launch-standard-docker.sh` or `./launchtools/launch-open-docker.sh`. Do not give it any CLI args.
-- Open a browser to http://localhost:7801
+## Experimental image
 
-# Docker-Compose
-
-If you're a "docker compose" fan, there is an included example docker compose file you can use as usual, which is equivalent to the "standard" option above.
-
-- Copy the `launchtools/example-docker-compose.yml` to `docker-compose.yml` in the Swarm root, optionally edit the contents (eg add other drives)
-- Run it via `HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose up`
-- You should probably `docker compose rm` after
-
-If you're not an active "docker compose" fan that needs it for some reason, I do not recommend it.
-
-# Advanced Usage, Notes, Troubleshooting
-
-- If you need to access a shell inside the Docker container while it's running, use `docker exec -it swarmui bash -l`
-    - To install pip packages, first `cd /SwarmUI/dlbackend/ComfyUI` then `./venv/bin/python -s -m pip install ...`
-- Everything goes under `/SwarmUI` inside the container
-- If you have an AMD or Intel GPU... uh, there's probably appropriate tooling for that. No idea what it is, good luck. (If you have such a GPU and find the answers to that, please PR docs about it!)
-- The "Standard" container runs as your own current user inside the container. Historically it originally ran as root, so you can run the script with `fixch` as the only arg to have it run as root and chown everything over.
-    - For the "Open" dockerfile, if needed, just `sudo chown -R $UID:$UID ./` inside the SwarmUI folder, since permissions are just a raw passthrough anyway.
-
-<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>
+The Experimental Dockerfile is not the recommended path for the bundled production workflow library. Use the Standard image unless you specifically need functionality documented for the experimental container.

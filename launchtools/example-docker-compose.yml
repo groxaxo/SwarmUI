@@ -10,7 +10,7 @@ services:
         UID: ${HOST_UID:-1000}
       dockerfile: launchtools/StandardDockerfile.docker
     container_name: swarmui
-    # uncomment `network_mode: host` if you want to access other services on the host network (eg a separated comfy instance)
+    # Uncomment `network_mode: host` if you want to access other services on the host network (for example a separately managed ComfyUI instance).
     # network_mode: host
     volumes:
       - swarmdata:/SwarmUI/Data
@@ -19,6 +19,8 @@ services:
       - swarmextensions:/SwarmUI/src/Extensions
       - ./Models:/SwarmUI/Models
       - ./Output:/SwarmUI/Output
+      # Persistent user workflow state. Bundled defaults are baked into the image under ExampleWorkflows
+      # and SwarmUI copies only missing examples into this mount, so rebuilds do not overwrite user edits.
       - ./src/BuiltinExtensions/ComfyUIBackend/CustomWorkflows:/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/CustomWorkflows
     ports:
       - "7801:7801"
@@ -27,8 +29,10 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              # change the count to the number of GPUs you want to use.
-              count: 1
+              # The bundled MiniMax H3 Ampere presets explicitly use cuda:0, cuda:1, and cuda:2.
+              # Default to three GPUs for that topology. Override, for example:
+              #   SWARM_GPU_COUNT=1 docker compose -f launchtools/example-docker-compose.yml up --build
+              count: ${SWARM_GPU_COUNT:-3}
               capabilities: [gpu]
 volumes:
   swarmdata:

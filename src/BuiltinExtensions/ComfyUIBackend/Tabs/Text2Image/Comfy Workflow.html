@@ -68,3 +68,66 @@
 <div id="comfy_workflow_frameholder" class="comfy_workflow_frameholder">
     <h1 class="translate">Seems like the ComfyUI workflow editor direct-access hasn't loaded. Give it a second to load, or try clicking the "Comfy Workflow" tab header - if it doesn't load, there might be an error message in your browser console or the server logs.</h1>
 </div>
+<script>
+(() => {
+    const installApiPromptLoader = () => {
+        if (typeof comfyLoadByName !== 'function'
+            || typeof genericRequest !== 'function'
+            || typeof comfyFrame !== 'function'
+            || typeof comfyNoticeMessage !== 'function') {
+            window.setTimeout(installApiPromptLoader, 50);
+            return;
+        }
+        if (comfyLoadByName.swarmSupportsApiPromptImport) {
+            return;
+        }
+        const parseStoredJson = (raw) => {
+            if (raw === null || raw === undefined) {
+                return null;
+            }
+            if (typeof raw !== 'string') {
+                return raw;
+            }
+            const trimmed = raw.trim();
+            if (!trimmed || trimmed === 'null') {
+                return null;
+            }
+            return JSON.parse(trimmed);
+        };
+        const loadStoredWorkflow = function(name) {
+            comfyNoticeMessage("Loading...");
+            genericRequest('ComfyReadWorkflow', { 'name': name }, async (data) => {
+                try {
+                    const app = comfyFrame().contentWindow.app;
+                    if (!app) {
+                        throw new Error('ComfyUI frontend is not ready.');
+                    }
+                    const workflow = parseStoredJson(data?.result?.workflow);
+                    if (workflow && Array.isArray(workflow.nodes)) {
+                        const liteGraph = comfyFrame().contentWindow.LiteGraph;
+                        app.loadGraphData(liteGraph.cloneObject(workflow));
+                    }
+                    else {
+                        const prompt = parseStoredJson(data?.result?.prompt);
+                        if (!prompt || typeof prompt !== 'object' || Array.isArray(prompt)) {
+                            throw new Error('Stored entry contains neither a UI workflow nor an API prompt.');
+                        }
+                        if (typeof app.loadApiJson !== 'function') {
+                            throw new Error('This ComfyUI frontend cannot import API-format workflows.');
+                        }
+                        await app.loadApiJson(prompt, name);
+                    }
+                    comfyNoticeMessage("Loaded.");
+                }
+                catch (error) {
+                    console.error(`Failed to load stored Comfy workflow '${name}':`, error);
+                    comfyNoticeMessage(`Failed to load: ${error?.message || error}`);
+                }
+            });
+        };
+        loadStoredWorkflow.swarmSupportsApiPromptImport = true;
+        comfyLoadByName = loadStoredWorkflow;
+    };
+    installApiPromptLoader();
+})();
+</script>

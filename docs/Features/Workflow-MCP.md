@@ -9,7 +9,7 @@ Supported project clients:
 - Claude Code
 - OMP / oh-my-pi
 
-All clients start the same stdio server at `integrations/workflow-mcp/src/index.js`. The shared skill is canonical under `.agents/skills/swarmui-video-workflows`; Claude Code receives a repository symlink under `.claude/skills` so instructions do not drift between clients.
+All clients start the same stdio server at `integrations/workflow-mcp/src/index.js`. The shared skill is canonical under `.agents/skills/swarmui-video-workflows`; an identical Claude-compatible copy is committed under `.claude/skills/swarmui-video-workflows` and validated against the canonical file so the instructions cannot drift unnoticed.
 
 ## What the server does
 
@@ -51,10 +51,10 @@ Node.js 20 or newer is required. The server uses the MCP TypeScript SDK v2 and Z
 | --- | --- | --- |
 | OpenCode | `opencode.json` | `.agents/skills/swarmui-video-workflows/SKILL.md` |
 | Codex | `.codex/config.toml` | `.agents/skills/swarmui-video-workflows/SKILL.md` |
-| Claude Code | `.mcp.json` | `.claude/skills/swarmui-video-workflows` symlink |
+| Claude Code | `.mcp.json` | `.claude/skills/swarmui-video-workflows/SKILL.md` |
 | OMP | `.omp/mcp.json` | `.agents/skills/swarmui-video-workflows/SKILL.md` |
 
-Restart the coding client after `npm install` so it starts the new MCP server. Each committed config is enabled but read-only by default.
+Restart the coding client after `npm install` so it starts the new MCP server. Each committed config is enabled but read-only by default. Claude Code's project config uses `bash` plus `git rev-parse --show-toplevel` so the server starts correctly even when Claude is launched from a repository subdirectory; native Windows users should run it through WSL or replace that command in their local configuration.
 
 ## Tool sequence
 

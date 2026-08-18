@@ -5,6 +5,7 @@
 - [Advanced Usage](/docs/Advanced%20Usage.md) for various advanced usage topics (use from external device, comfy workflows, ...)
 - [Features](/docs/Features/README.md) for a sub-listing of various specific Swarm features and how to use them.
     - [Custom Comfy Workflows](/docs/Features/Comfy-Workflows.md) covers the bundled workflow library, including the pinned MiniMax H3 and LTX 2.5 defaults.
+    - [Workflow MCP Server](/docs/Features/Workflow-MCP.md) exposes the bundled video workflows to OpenCode, Codex, Claude Code, and OMP through one guarded local MCP service and shared skill.
 - Environment related docs:
     - [Docker](/docs/Docker.md) for using SwarmUI inside a Docker container, including the three-GPU video-workflow example configuration.
     - [Using More GPUs](/docs/Using%20More%20GPUs.md) for more info about splitting generations between multiple GPUs.
@@ -21,7 +22,7 @@
         - [ComfyUI Backend Extension](/src/BuiltinExtensions/ComfyUIBackend/README.md)
         - [ComfyUI Compatibility](/docs/ComfyUI%20Compatibility.md) for self-starting, external API, dependency, model-path, and multi-GPU guidance.
         - Legacy [Auto WebUI Backend Extension](/src/BuiltinExtensions/AutoWebUIBackend/README.md)
-    - TODO: Tools (what a tool is, how to use em, etc)
+    - TODO: Tools (what a tool is, supported options, usage, etc)
         - [GridGenerator](/src/BuiltinExtensions/GridGenerator/README.md)
         - [ImageBatchTool](/src/BuiltinExtensions/ImageBatchTool/README.md)
     - Other:

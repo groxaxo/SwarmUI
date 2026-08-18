@@ -254,7 +254,9 @@ export class WorkflowCatalog {
       const id = stripJsonExtension(relativePath);
       const strings = deepStrings(raw);
       const placeholders = collectPlaceholders(strings);
-      const referenceErrors = validatePromptReferences(normalized.prompt);
+      const referenceErrors = normalized.prompt
+        ? validatePromptReferences(normalized.prompt)
+        : [];
       const uiErrors = validateUiWorkflow(normalized.workflow);
       const classTypes = uniqueSorted([
         ...promptNodeClasses(normalized.prompt),

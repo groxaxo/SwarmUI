@@ -50,12 +50,16 @@ class MovableGenTab {
 
     /** Triggers an update, moving this to where it's meant to be. */
     update() {
-        if (this.targetGroupId != this.currentGroup.id) {
+        let targetGroupId = this.targetGroupId;
+        if (this.handler.isSmallWindow && targetGroupId != this.defaultGroup.id) {
+            targetGroupId = this.defaultGroup.id;
+        }
+        if (targetGroupId != this.currentGroup.id) {
             if (this.visible && this.navElem.classList.contains('active')) {
                 this.clickOther();
                 this.setNotSelected();
             }
-            this.currentGroup = getRequiredElementById(this.targetGroupId);
+            this.currentGroup = getRequiredElementById(targetGroupId);
             this.currentGroup.appendChild(this.navElem.parentElement);
             let newContentContainer = getRequiredElementById(this.currentGroup.dataset.content);
             newContentContainer.appendChild(this.contentElem);
@@ -63,11 +67,13 @@ class MovableGenTab {
                 this.navElem.click();
             }
         }
-        if (this.targetGroupId != this.defaultGroup.id) {
-            setCookie(`tabloc_${this.id}`, this.targetGroupId, 365);
-        }
-        else {
-            deleteCookie(`tabloc_${this.id}`);
+        if (!this.handler.isSmallWindow) {
+            if (this.targetGroupId != this.defaultGroup.id) {
+                setCookie(`tabloc_${this.id}`, this.targetGroupId, 365);
+            }
+            else {
+                deleteCookie(`tabloc_${this.id}`);
+            }
         }
         if (!this.visible && this.navElem.classList.contains('active')) {
             this.clickOther();
@@ -144,27 +150,6 @@ class GenTabLayout {
         this.antiDup = false;
         this.swipeStartX = -1;
         this.swipeStartY = -1;
-        this.minSwipeDelta = Math.min(100, window.innerWidth * 0.4);
-        /** Active follow-finger mobile panel drag target, or null. */
-        this.mobileDragPanel = null;
-        /** Whether a mobile panel drag has locked onto an axis. */
-        this.mobileDragActive = false;
-        /** Page X where the current mobile drag started. */
-        this.mobileDragStartX = 0;
-        /** Page Y where the current mobile drag started. */
-        this.mobileDragStartY = 0;
-        /** Whether the drag is opening (true) or closing (false) a panel. */
-        this.mobileDragOpening = false;
-        /** Scrim element behind mobile overlays. */
-        this.mobileScrim = null;
-        /** Ignore synthetic/ghost clicks until this timestamp (iOS tap-dismiss). */
-        this.mobileIgnoreClicksUntil = 0;
-        /** Left edge swipe-hint button. */
-        this.mobileHintLeft = null;
-        /** Right edge swipe-hint button. */
-        this.mobileHintRight = null;
-        /** Whether the mobile prompt textboxes currently have focus. */
-        this.mobilePromptFocused = false;
         /** How many px the mobile top tab bar is currently collapsed by. */
         this.mobileTopbarCollapsePx = 0;
         /** True while a finger is driving topbar collapse. */
@@ -185,86 +170,34 @@ class GenTabLayout {
         return window.innerHeight;
     }
 
-    /** Soft-keyboard overlap below the visual viewport, in px. */
-    getKeyboardInset() {
-        if (!this.isSmallWindow || !this.mobilePromptFocused || !window.visualViewport) {
-            return 0;
-        }
-        let inset = Math.max(0, Math.round(window.innerHeight - (window.visualViewport.height + window.visualViewport.offsetTop)));
-        if (inset < 60) {
-            return 0;
-        }
-        return inset;
-    }
-
-    /** Syncs keyboard-related body classes and CSS vars. Returns true if the bottom peek should hide. */
-    syncMobileKeyboardState() {
-        let inset = this.getKeyboardInset();
-        let vvShrank = window.visualViewport
-            && (window.innerHeight - window.visualViewport.height) > 100;
-        let hidePeek = this.isSmallWindow && (this.mobilePromptFocused || vvShrank);
-        document.documentElement.style.setProperty('--mobile-keyboard-inset', `${inset}px`);
-        document.body.classList.toggle('mobile-keyboard-open', hidePeek);
-        document.body.classList.toggle('mobile-keyboard-pin', inset > 0);
-        return hidePeek;
-    }
-
-    /** Whether the mobile left (inputs) overlay should be open. */
-    isMobileLeftOpen() {
-        return !this.leftShut;
-    }
-
-    /** Whether the mobile right (batch) overlay should be open. */
-    isMobileRightOpen() {
-        return this.rightSectionBarPos > 0;
-    }
-
-    /** Whether the mobile bottom overlay should be open. */
-    isMobileBottomOpen() {
-        return !this.bottomShut;
-    }
-
-    /** Whether no mobile overlays are open. */
-    areAllMobilePanelsShut() {
-        return this.leftShut && this.rightSectionBarPos <= 0 && this.bottomShut;
-    }
-
-    /** Returns the DOM element for a mobile panel id. */
-    getMobilePanelElem(which) {
-        if (which == 'left') {
-            return this.inputSidebar;
-        }
-        if (which == 'right') {
-            return this.currentImageBatch;
-        }
-        if (which == 'bottom') {
-            return this.bottomBar;
-        }
-        return null;
-    }
-
-    /** Clears follow-finger inline transforms from mobile panels. */
-    clearMobileDragTransforms() {
-        for (let which of ['left', 'right', 'bottom']) {
-            let elem = this.getMobilePanelElem(which);
-            if (elem) {
-                elem.style.transform = '';
-            }
-        }
-        if (this.mobileScrim) {
-            this.mobileScrim.style.opacity = '';
-        }
-    }
-
-    /** Clears mobile overlay state when leaving small-window mode. */
+    /** Clears mobile layout state when leaving small-window mode. */
     clearMobileInlineStyles() {
-        this.clearMobileDragTransforms();
         this.altRegion.style.visibility = '';
-        document.documentElement.style.removeProperty('--mobile-keyboard-inset');
         document.documentElement.style.removeProperty('--mobile-topbar-collapse');
-        document.body.classList.remove('mobile-panel-left-open', 'mobile-panel-right-open', 'mobile-panel-bottom-open', 'mobile-panels-all-shut', 'mobile-panel-dragging', 'mobile-keyboard-pin', 'mobile-keyboard-open');
+        document.body.classList.remove('mobile-panel-dragging');
         this.mobileTopbarCollapsePx = 0;
         this.mobileTopbarDragging = false;
+    }
+
+    /** Clears desktop-path inline geometry so the small-window list layout (pure CSS) takes over. */
+    clearDesktopInlineStyles() {
+        for (let elem of [this.topSection, this.inputSidebar, this.mainImageArea, this.currentImageWrapbox, this.currentImage, this.currentImageBatch, this.bottomBar, this.altRegion, this.editorSizebar, this.leftSplitBar, this.rightSplitBar, this.bottomSplitBar]) {
+            elem.style.width = '';
+            elem.style.height = '';
+            elem.style.display = '';
+        }
+        this.altRegion.style.top = '';
+        this.altRegion.style.visibility = '';
+        this.quickToolsButton.style.top = '';
+        this.quickToolsButton.style.right = '';
+        this.toolContainer.style.minHeight = '';
+        for (let container of this.managedTabContainers) {
+            container.style.height = '';
+        }
+        for (let tab of this.managedTabs) {
+            tab.contentElem.style.height = '';
+            tab.contentElem.style.width = '';
+        }
     }
 
     /** Progressive mobile top-tab collapse (0 = open). Follows finger / scroll. */
@@ -279,14 +212,6 @@ class GenTabLayout {
         let rootTop = this.t2iRootDiv.getBoundingClientRect().top;
         this.quickToolsButton.style.top = `${Math.max(2, rootTop - 12)}px`;
         this.quickToolsButton.style.right = '0.5rem';
-        let viewH = this.getViewportHeight();
-        let bottomPeek = document.body.classList.contains('mobile-keyboard-open') ? 0 : this.getMobileBottomPeekPx();
-        let topHeight = Math.max(120, viewH - rootTop - bottomPeek);
-        this.mainImageArea.style.height = `${topHeight}px`;
-        this.topSection.style.height = `${topHeight}px`;
-        let altHeight = this.altRegion.style.display == 'none' || this.isMobileBottomOpen() ? 0 : this.altRegion.offsetHeight;
-        this.currentImageWrapbox.style.height = `calc(${topHeight}px - ${altHeight}px)`;
-        this.editorSizebar.style.height = `calc(${topHeight}px - ${altHeight}px)`;
     }
 
     /** Fully hides the mobile top tab bar (leaves the Quick Tools peek). */
@@ -294,304 +219,14 @@ class GenTabLayout {
         this.setMobileTopbarCollapse(1e9);
     }
 
-    /** Syncs body classes that drive mobile overlay CSS. */
-    syncMobilePanelClasses() {
-        if (!this.isSmallWindow) {
-            document.body.classList.remove('mobile-panel-left-open', 'mobile-panel-right-open', 'mobile-panel-bottom-open', 'mobile-panels-all-shut', 'mobile-panel-dragging');
-            return;
-        }
-        document.body.classList.toggle('mobile-panel-left-open', this.isMobileLeftOpen());
-        document.body.classList.toggle('mobile-panel-right-open', this.isMobileRightOpen());
-        document.body.classList.toggle('mobile-panel-bottom-open', this.isMobileBottomOpen());
-        document.body.classList.toggle('mobile-panels-all-shut', this.areAllMobilePanelsShut());
-    }
-
-    /** Opens a mobile overlay panel, closing the others. */
-    openMobilePanel(which) {
-        this.hideMobileTopbar();
-        if (which == 'left') {
-            this.setLeftShut(false);
-            this.leftSectionBarPos = window.innerWidth;
-            this.rightSectionBarPos = 0;
-            this.setBottomShut(true);
-        }
-        else if (which == 'right') {
-            this.setLeftShut(true);
-            this.leftSectionBarPos = 0;
-            this.rightSectionBarPos = window.innerWidth;
-            this.setBottomShut(true);
-        }
-        else if (which == 'bottom') {
-            this.setLeftShut(true);
-            this.leftSectionBarPos = 0;
-            this.rightSectionBarPos = 0;
-            this.setBottomShut(false);
-            this.bottomSectionBarPos = this.getViewportHeight() + 200;
-        }
-        this.clearMobileDragTransforms();
-        this.syncMobilePanelClasses();
-        this.reapplyPositions();
-    }
-
-    /** Closes a mobile overlay panel (or all if which is null). */
-    closeMobilePanel(which = null) {
-        if (which == null || which == 'left') {
-            this.setLeftShut(true);
-            this.leftSectionBarPos = 0;
-        }
-        if (which == null || which == 'right') {
-            this.rightSectionBarPos = 0;
-        }
-        if (which == null || which == 'bottom') {
-            this.setBottomShut(true);
-        }
-        this.clearMobileDragTransforms();
-        this.syncMobilePanelClasses();
-        this.reapplyPositions();
-    }
-
-    /** Closes every mobile overlay panel. */
-    closeAllMobilePanels() {
-        this.closeMobilePanel(null);
-    }
-
-    /** Which mobile overlay is open, if any. */
-    getOpenMobilePanel() {
-        if (this.isMobileBottomOpen()) {
-            return 'bottom';
-        }
-        if (this.isMobileLeftOpen()) {
-            return 'left';
-        }
-        if (this.isMobileRightOpen()) {
-            return 'right';
-        }
-        return null;
-    }
-
-    /** Dismiss the current mobile overlay (same path as a completed swipe-close). */
-    dismissMobileOverlayFromScrim() {
-        let which = this.getOpenMobilePanel();
-        if (which) {
-            this.closeMobilePanel(which);
-        }
-        else {
-            this.closeAllMobilePanels();
-        }
-    }
-
-    /** Applies a follow-finger transform for the active mobile drag. */
-    applyMobileDragTransform(pageX, pageY) {
-        let elem = this.getMobilePanelElem(this.mobileDragPanel);
-        if (!elem) {
-            return;
-        }
-        let deltaX = pageX - this.mobileDragStartX;
-        let deltaY = pageY - this.mobileDragStartY;
-        let width = window.innerWidth;
-        let height = this.getViewportHeight();
-        let progress = 0;
-        if (this.mobileDragPanel == 'left') {
-            if (this.mobileDragOpening) {
-                let x = Math.min(0, -width + Math.max(0, deltaX));
-                elem.style.transform = `translateX(${x}px)`;
-                progress = Math.min(1, Math.max(0, (deltaX) / width));
-            }
-            else {
-                let x = Math.max(-width, Math.min(0, deltaX));
-                elem.style.transform = `translateX(${x}px)`;
-                progress = Math.min(1, Math.max(0, 1 + (x / width)));
-            }
-        }
-        else if (this.mobileDragPanel == 'right') {
-            if (this.mobileDragOpening) {
-                let x = Math.max(0, width + Math.min(0, deltaX));
-                elem.style.transform = `translateX(${x}px)`;
-                progress = Math.min(1, Math.max(0, (-deltaX) / width));
-            }
-            else {
-                let x = Math.min(width, Math.max(0, deltaX));
-                elem.style.transform = `translateX(${x}px)`;
-                progress = Math.min(1, Math.max(0, 1 - (x / width)));
-            }
-        }
-        else if (this.mobileDragPanel == 'bottom') {
-            let peek = this.getMobileBottomPeekPx();
-            let dismissGap = Math.min(52, Math.round(height * 0.07));
-            let full = Math.max(200, height - this.t2iRootDiv.getBoundingClientRect().top - dismissGap);
-            let travel = Math.max(1, full - peek);
-            let h;
-            if (this.mobileDragOpening) {
-                h = Math.min(full, Math.max(peek, peek - deltaY));
-                progress = Math.min(1, Math.max(0, (h - peek) / travel));
-            }
-            else {
-                h = Math.min(full, Math.max(peek, full - deltaY));
-                progress = Math.min(1, Math.max(0, (h - peek) / travel));
-            }
-            elem.style.transform = '';
-            elem.style.height = `${h}px`;
-        }
-        if (this.mobileScrim) {
-            this.mobileScrim.style.opacity = `${Math.min(0.45, 0.15 + progress * 0.3)}`;
-        }
-    }
-
-    /** Pixel height of the bottom info+tabs peek when the bottom panel is shut. */
-    getMobileBottomPeekPx() {
-        let infoH = this.bottomInfoBar ? this.bottomInfoBar.offsetHeight : 0;
-        let tabs = getRequiredElementById('bottombartabcollection');
-        let tabsH = tabs.getBoundingClientRect().height;
-        if (!tabsH || tabsH < 24) {
-            tabsH = 2.75 * parseFloat(getComputedStyle(document.documentElement).fontSize);
-        }
-        return Math.ceil(infoH + tabsH + 4);
-    }
-
-    /** True if a touch target is inside a scrollable mobile content area (not an edge gesture). */
-    isMobileScrollableTouchTarget(target) {
-        if (!target || !target.closest) {
-            return false;
-        }
-        if (target.closest('textarea, input, select, button, a, .nav-link, .basic-button, .interrupt-button, .model-block, .sui-popover, .mobile-layout-scrim, .mobile-edge-hint, #image_fullview_modal, #image_compare_modal')) {
-            return true;
-        }
-        if (target.closest('.main_inputs_area_wrapper, .current_image_batch_core, .browser-content-container, .browser_container, .scroll-within-tab')) {
-            return true;
-        }
-        return false;
-    }
-
-    /** True if a touch is on a splitter/drag handle that must not start a panel gesture. */
-    isMobileSplitterTouchTarget(target) {
-        return !!(target && target.closest && target.closest('.splitter-bar, .browser-folder-tree-splitter'));
-    }
-
-    /** Determines which mobile panel gesture (if any) a touch should start. */
-    getMobileGestureForTouch(startX, startY, target) {
-        if (this.isMobileSplitterTouchTarget(target)) {
-            return null;
-        }
-        let width = window.innerWidth;
-        let height = this.getViewportHeight();
-        let edgeX = width / 6;
-        let edgeY = height / 6;
-        let allShut = this.areAllMobilePanelsShut();
-        let inScrollable = this.isMobileScrollableTouchTarget(target);
-        if (this.isMobileLeftOpen()) {
-            return { panel: 'left', opening: false };
-        }
-        if (this.isMobileRightOpen()) {
-            return { panel: 'right', opening: false };
-        }
-        if (this.isMobileBottomOpen()) {
-            return { panel: 'bottom', opening: false };
-        }
-        if (!allShut) {
-            return null;
-        }
-        if (startX < edgeX && (!inScrollable || startX < 24)) {
-            return { panel: 'left', opening: true };
-        }
-        if (startX > width - edgeX && (!inScrollable || startX > width - 24)) {
-            return { panel: 'right', opening: true };
-        }
-        if (startY > height - edgeY && (!inScrollable || startY > height - 24)) {
-            return { panel: 'bottom', opening: true };
-        }
-        return null;
-    }
-
-    /** Completes or cancels the current mobile follow-finger drag. */
-    finishMobileDrag(pageX, pageY) {
-        if (!this.mobileDragActive || !this.mobileDragPanel) {
-            this.mobileDragActive = false;
-            this.mobileDragPanel = null;
-            document.body.classList.remove('mobile-panel-dragging');
-            return;
-        }
-        let deltaX = pageX - this.mobileDragStartX;
-        let deltaY = pageY - this.mobileDragStartY;
-        let panel = this.mobileDragPanel;
-        let opening = this.mobileDragOpening;
-        let commit = false;
-        if (panel == 'left') {
-            commit = opening ? deltaX > this.minSwipeDelta : deltaX < -this.minSwipeDelta;
-        }
-        else if (panel == 'right') {
-            commit = opening ? deltaX < -this.minSwipeDelta : deltaX > this.minSwipeDelta;
-        }
-        else if (panel == 'bottom') {
-            commit = opening ? deltaY < -this.minSwipeDelta : deltaY > this.minSwipeDelta;
-        }
-        this.mobileDragActive = false;
-        this.mobileDragPanel = null;
-        document.body.classList.remove('mobile-panel-dragging');
-        this.clearMobileDragTransforms();
-        if (commit) {
-            if (opening) {
-                this.openMobilePanel(panel);
-            }
-            else {
-                this.closeMobilePanel(panel);
-            }
-        }
-        else {
-            this.syncMobilePanelClasses();
-            this.reapplyPositions();
-        }
-    }
-
-    /** Builds mobile-only overlay helpers (scrim + edge hints). */
-    initMobileOverlayUi() {
-        let host = this.t2iRootDiv;
-        this.mobileScrim = createDiv('mobile_layout_scrim', 'mobile-layout-scrim');
-        this.mobileScrim.addEventListener('touchend', (e) => {
-            if (!this.isSmallWindow || e.changedTouches.length != 1) {
-                return;
-            }
-            this.mobileIgnoreClicksUntil = Date.now() + 500;
-            this.swipeStartX = -1;
-            this.swipeStartY = -1;
-            this.mobileDragActive = false;
-            this.mobileDragPanel = null;
-            document.body.classList.remove('mobile-panel-dragging');
-            if (e.cancelable) {
-                e.preventDefault();
-            }
-            e.stopPropagation();
-            this.dismissMobileOverlayFromScrim();
-        }, { passive: false });
-        this.mobileScrim.addEventListener('click', (e) => {
-            if (Date.now() < this.mobileIgnoreClicksUntil) {
-                e.preventDefault();
-                e.stopPropagation();
-                return;
-            }
-            this.dismissMobileOverlayFromScrim();
-        });
-        document.addEventListener('click', (e) => {
-            if (Date.now() < this.mobileIgnoreClicksUntil) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-            }
-        }, true);
-        host.appendChild(this.mobileScrim);
-        this.mobileHintLeft = createDiv('mobile_edge_hint_left', 'mobile-edge-hint mobile-edge-hint-left', '&#x2039;');
-        this.mobileHintRight = createDiv('mobile_edge_hint_right', 'mobile-edge-hint mobile-edge-hint-right', '&#x203A;');
-        this.mobileHintLeft.title = 'Swipe right for inputs';
-        this.mobileHintRight.title = 'Swipe left for batch';
-        this.mobileHintLeft.addEventListener('click', () => this.openMobilePanel('left'));
-        this.mobileHintRight.addEventListener('click', () => this.openMobilePanel('right'));
-        host.appendChild(this.mobileHintLeft);
-        host.appendChild(this.mobileHintRight);
+    /** Wires scroll/focus behavior for the small-window list layout. */
+    initMobileListUi() {
         document.addEventListener('scroll', (e) => {
             if (!this.isSmallWindow || this.mobileTopbarDragging || document.body.classList.contains('modal-open')) {
                 return;
             }
             let el = e.target;
-            if (!(el instanceof Element) || !el.matches('.main_inputs_area_wrapper, .current_image_batch_core, .browser-content-container, .browser_container, .scroll-within-tab')) {
+            if (!(el instanceof Element) || !el.matches('#Text2Image, .main_inputs_area_wrapper, .current_image_batch_core, .browser-content-container, .browser_container, .scroll-within-tab')) {
                 return;
             }
             this.setMobileTopbarCollapse(el.scrollTop);
@@ -654,16 +289,27 @@ class GenTabLayout {
     
     /** Does the full position update logic. */
     reapplyPositions() {
+        let wasSmallWindow = this.isSmallWindow;
         this.isSmallWindow = this.mobileDesktopLayout == 'auto' ? window.innerWidth < 768 : this.mobileDesktopLayout == 'mobile';
-        this.minSwipeDelta = Math.min(100, window.innerWidth * 0.4);
         if (this.isSmallWindow) {
             document.body.classList.add('small-window');
             document.body.classList.remove('large-window');
+            if (wasSmallWindow != true) {
+                this.clearDesktopInlineStyles();
+                for (let tab of this.managedTabs) {
+                    tab.update();
+                }
+            }
         }
         else {
             document.body.classList.remove('small-window');
             document.body.classList.add('large-window');
-            this.clearMobileInlineStyles();
+            if (wasSmallWindow == true) {
+                this.clearMobileInlineStyles();
+                for (let tab of this.managedTabs) {
+                    tab.update();
+                }
+            }
         }
         fixTabHeights();
         tweakNegativePromptBox();
@@ -689,13 +335,12 @@ class GenTabLayout {
         setCookie('barspot_pageBarTop2', this.rightSectionBarPos, 365);
         setCookie('barspot_pageBarMidPx', this.bottomSectionBarPos, 365);
         setCookie('barspot_imageEditorSizeBar', this.imageEditorBarPos, 365);
-        this.toolContainer.style.minHeight = `calc(100% - ${this.toolContainer.getBoundingClientRect().top - this.toolContainer.parentElement.getBoundingClientRect().top}px - 1.5rem)`;
+        if (!this.isSmallWindow) {
+            this.toolContainer.style.minHeight = `calc(100% - ${this.toolContainer.getBoundingClientRect().top - this.toolContainer.parentElement.getBoundingClientRect().top}px - 1.5rem)`;
+        }
         this.leftSplitBarButton.innerHTML = leftShut ? '&#x21DB;' : '&#x21DA;';
         this.bottomSplitBarButton.innerHTML = bottomShut ? '&#x290A;' : '&#x290B;';
-        if (this.isSmallWindow) {
-            this.reapplyMobilePositions(rootTop, viewH);
-        }
-        else {
+        if (!this.isSmallWindow) {
             this.reapplyDesktopPositions(rootTop, leftShut, bottomShut);
         }
         if (imageEditor) {
@@ -705,57 +350,14 @@ class GenTabLayout {
         for (let collection of this.tabCollections) {
             collection.style.display = [...collection.querySelectorAll('.nav-link')].length > 1 ? '' : 'none';
         }
-        for (let container of this.managedTabContainers) {
-            let parent = container.parentElement;
-            let offset = container.getBoundingClientRect().top - parent.getBoundingClientRect().top;
-            container.style.height = `calc(100% - ${offset}px)`;
+        if (!this.isSmallWindow) {
+            for (let container of this.managedTabContainers) {
+                let parent = container.parentElement;
+                let offset = container.getBoundingClientRect().top - parent.getBoundingClientRect().top;
+                container.style.height = `calc(100% - ${offset}px)`;
+            }
         }
         browserUtil.makeVisible(document);
-    }
-
-    /** Mobile overlay positioning path (small-window only). */
-    reapplyMobilePositions(rootTop, viewH) {
-        let hideBottomPeek = this.syncMobileKeyboardState();
-        let peek = hideBottomPeek ? 0 : this.getMobileBottomPeekPx();
-        let topHeight = Math.max(120, viewH - rootTop - peek);
-        this.syncMobilePanelClasses();
-        this.inputSidebar.style.display = '';
-        this.inputSidebar.style.width = '100%';
-        this.inputSidebar.style.height = '';
-        this.mainImageArea.style.width = '100%';
-        this.mainImageArea.style.height = `${topHeight}px`;
-        this.mainImageArea.scrollTop = 0;
-        this.topSection.style.height = `${topHeight}px`;
-        this.currentImageBatch.style.width = '100%';
-        this.currentImageBatch.style.height = '';
-        let fullBottom = Math.max(200, viewH - rootTop);
-        if (this.isMobileBottomOpen()) {
-            fullBottom = Math.max(200, fullBottom - Math.min(52, Math.round(viewH * 0.07)));
-        }
-        this.bottomBar.style.height = `${this.isMobileBottomOpen() ? fullBottom : peek}px`;
-        this.altRegion.style.width = '100%';
-        this.altRegion.style.top = '';
-        let altHeight = this.altRegion.style.display == 'none' || this.isMobileBottomOpen() ? 0 : this.altRegion.offsetHeight;
-        this.currentImageWrapbox.style.width = '100%';
-        this.currentImageWrapbox.style.height = `calc(${topHeight}px - ${altHeight}px)`;
-        this.editorSizebar.style.height = `calc(${topHeight}px - ${altHeight}px)`;
-        if (imageEditor && imageEditor.active) {
-            let imageEditorSizePercent = this.imageEditorBarPos < 0 ? 0.5 : (this.imageEditorBarPos / 100.0);
-            imageEditor.inputDiv.style.width = `calc((100%) * ${imageEditorSizePercent})`;
-            this.currentImage.style.width = `calc((100%) * ${(1.0 - imageEditorSizePercent)} - 6px)`;
-        }
-        else {
-            this.currentImage.style.width = '100%';
-        }
-        if (this.currentImageBatchCore.offsetWidth < 425) {
-            this.currentImageBatchCore.classList.add('current_image_batch_core_small');
-        }
-        else {
-            this.currentImageBatchCore.classList.remove('current_image_batch_core_small');
-        }
-        if (!this.mobileDragActive) {
-            this.clearMobileDragTransforms();
-        }
     }
 
     /** Desktop split-bar positioning path (large-window only). */
@@ -963,54 +565,7 @@ class GenTabLayout {
                     }
                     return;
                 }
-                if (!this.mobileDragActive && this.mobileDragPanel) {
-                    let absX = Math.abs(deltaX);
-                    let absY = Math.abs(deltaY);
-                    if (absX > 8 || absY > 8) {
-                        let wantHorizontal = this.mobileDragPanel == 'left' || this.mobileDragPanel == 'right';
-                        if (wantHorizontal && absX > absY) {
-                            this.mobileDragActive = true;
-                            if (this.mobileDragOpening) {
-                                this.hideMobileTopbar();
-                            }
-                            document.body.classList.add('mobile-panel-dragging');
-                            if (this.mobileDragOpening) {
-                                if (this.mobileDragPanel == 'left') {
-                                    document.body.classList.add('mobile-panel-left-open');
-                                }
-                                else if (this.mobileDragPanel == 'right') {
-                                    document.body.classList.add('mobile-panel-right-open');
-                                }
-                                else if (this.mobileDragPanel == 'bottom') {
-                                    document.body.classList.add('mobile-panel-bottom-open');
-                                }
-                                document.body.classList.remove('mobile-panels-all-shut');
-                            }
-                        }
-                        else if (!wantHorizontal && absY > absX) {
-                            this.mobileDragActive = true;
-                            if (this.mobileDragOpening) {
-                                this.hideMobileTopbar();
-                            }
-                            document.body.classList.add('mobile-panel-dragging');
-                            if (this.mobileDragOpening) {
-                                document.body.classList.add('mobile-panel-bottom-open');
-                                document.body.classList.remove('mobile-panels-all-shut');
-                            }
-                        }
-                        else {
-                            this.mobileDragPanel = null;
-                        }
-                    }
-                }
-                if (this.mobileDragActive) {
-                    this.applyMobileDragTransform(touch.pageX, touch.pageY);
-                    if (e.cancelable) {
-                        e.preventDefault();
-                    }
-                    return;
-                }
-                if (this.mobileTopbarCanDrag && !this.mobileDragPanel && Math.abs(deltaY) > 8 && Math.abs(deltaY) > Math.abs(deltaX)) {
+                if (this.mobileTopbarCanDrag && Math.abs(deltaY) > 8 && Math.abs(deltaY) > Math.abs(deltaX)) {
                     this.mobileTopbarDragging = true;
                     this.mobileTopbarDragFrom = this.mobileTopbarCollapsePx;
                     this.setMobileTopbarCollapse(this.mobileTopbarDragFrom - deltaY);
@@ -1031,17 +586,9 @@ class GenTabLayout {
             this.imageEditorSizeBarDrag = false;
         });
         document.addEventListener('touchstart', (e) => {
-            this.mobileDragActive = false;
-            this.mobileDragPanel = null;
             this.mobileTopbarCanDrag = false;
             this.mobileTopbarDragging = false;
-            document.body.classList.remove('mobile-panel-dragging');
             if (this.isSmallWindow && document.body.classList.contains('modal-open')) {
-                this.swipeStartX = -1;
-                this.swipeStartY = -1;
-                return;
-            }
-            if (this.isSmallWindow && this.isMobileSplitterTouchTarget(e.target)) {
                 this.swipeStartX = -1;
                 this.swipeStartY = -1;
                 return;
@@ -1049,16 +596,8 @@ class GenTabLayout {
             if (e.touches.length == 1 && !['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) && !findParentOfClass(e.target, 'model-block')) {
                 this.swipeStartX = e.touches.item(0).pageX;
                 this.swipeStartY = e.touches.item(0).pageY;
-                this.mobileDragStartX = this.swipeStartX;
-                this.mobileDragStartY = this.swipeStartY;
                 if (this.isSmallWindow) {
-                    let gesture = this.getMobileGestureForTouch(this.swipeStartX, this.swipeStartY, e.target);
-                    if (gesture) {
-                        this.mobileDragPanel = gesture.panel;
-                        this.mobileDragOpening = gesture.opening;
-                    }
-                    let onTopChrome = !!(e.target.closest && e.target.closest('#toptablist, .t2i-area-quicktools'));
-                    this.mobileTopbarCanDrag = onTopChrome || (!this.isMobileScrollableTouchTarget(e.target) && this.areAllMobilePanelsShut());
+                    this.mobileTopbarCanDrag = !!(e.target.closest && e.target.closest('#toptablist, .t2i-area-quicktools'));
                 }
             }
             else {
@@ -1071,82 +610,23 @@ class GenTabLayout {
             this.rightBarDrag = false;
             this.bottomBarDrag = false;
             this.imageEditorSizeBarDrag = false;
-            let touch = e.changedTouches.length == 1 ? e.changedTouches.item(0) : null;
             if (this.mobileTopbarDragging) {
                 this.mobileTopbarDragging = false;
                 this.mobileTopbarCanDrag = false;
                 this.swipeStartX = -1;
                 this.swipeStartY = -1;
-                this.mobileDragActive = false;
-                this.mobileDragPanel = null;
                 this.reapplyPositions();
                 return;
             }
-            if (!touch) {
-                this.swipeStartX = -1;
-                this.swipeStartY = -1;
-                this.mobileDragActive = false;
-                this.mobileDragPanel = null;
-                this.mobileTopbarCanDrag = false;
-                document.body.classList.remove('mobile-panel-dragging');
-                return;
-            }
-            if (this.isSmallWindow && this.mobileDragActive) {
-                this.finishMobileDrag(touch.pageX, touch.pageY);
-                this.swipeStartX = -1;
-                this.swipeStartY = -1;
-                this.mobileTopbarCanDrag = false;
-                return;
-            }
-            if (this.swipeStartX != -1 && this.swipeStartY != -1 && this.isSmallWindow) {
-                let deltaX = touch.pageX - this.swipeStartX;
-                let deltaY = touch.pageY - this.swipeStartY;
-                let allShut = this.areAllMobilePanelsShut();
-                if (Math.abs(deltaX) > Math.abs(deltaY)) {
-                    if (Math.abs(deltaX) > this.minSwipeDelta) {
-                        if (!this.leftShut && deltaX < 0) {
-                            this.closeMobilePanel('left');
-                        }
-                        else if (this.rightSectionBarPos > 0 && deltaX > 0) {
-                            this.closeMobilePanel('right');
-                        }
-                        else if (this.swipeStartX < window.innerWidth / 6 && deltaX > 0 && allShut) {
-                            this.openMobilePanel('left');
-                        }
-                        else if (this.swipeStartX > window.innerWidth * 5 / 6 && deltaX < 0 && allShut) {
-                            this.openMobilePanel('right');
-                        }
-                    }
-                }
-                else {
-                    if (Math.abs(deltaY) > this.minSwipeDelta) {
-                        if (!this.bottomShut && deltaY > 0) {
-                            this.closeMobilePanel('bottom');
-                        }
-                        else if (this.swipeStartY > this.getViewportHeight() * 5 / 6 && deltaY < 0 && allShut) {
-                            this.openMobilePanel('bottom');
-                        }
-                    }
-                }
-            }
             this.swipeStartX = -1;
             this.swipeStartY = -1;
-            this.mobileDragActive = false;
-            this.mobileDragPanel = null;
             this.mobileTopbarCanDrag = false;
-            document.body.classList.remove('mobile-panel-dragging');
-            this.clearMobileDragTransforms();
         });
         for (let tab of getRequiredElementById('bottombartabcollection').getElementsByTagName('a')) {
             tab.addEventListener('click', (e) => {
-                if (swarmHasLoaded) {
-                    if (this.isSmallWindow) {
-                        this.openMobilePanel('bottom');
-                    }
-                    else {
-                        this.setBottomShut(false);
-                        this.reapplyPositions();
-                    }
+                if (swarmHasLoaded && !this.isSmallWindow) {
+                    this.setBottomShut(false);
+                    this.reapplyPositions();
                 }
             });
         }
@@ -1208,36 +688,8 @@ class GenTabLayout {
         textPromptAddKeydownHandler(this.altText);
         textPromptAddKeydownHandler(this.altNegText);
         addEventListener("resize", this.reapplyPositions.bind(this));
-        if (window.visualViewport) {
-            let vvHandler = () => {
-                if (this.isSmallWindow && this.mobilePromptFocused) {
-                    this.reapplyPositions();
-                }
-            };
-            window.visualViewport.addEventListener('resize', vvHandler);
-            window.visualViewport.addEventListener('scroll', vvHandler);
-        }
-        let promptFocusHandler = () => {
-            this.mobilePromptFocused = true;
-            if (this.isSmallWindow) {
-                this.reapplyPositions();
-            }
-        };
-        let promptBlurHandler = () => {
-            setTimeout(() => {
-                let active = document.activeElement;
-                this.mobilePromptFocused = active == this.altText || active == this.altNegText;
-                if (this.isSmallWindow) {
-                    this.reapplyPositions();
-                }
-            }, 50);
-        };
-        this.altText.addEventListener('focus', promptFocusHandler);
-        this.altNegText.addEventListener('focus', promptFocusHandler);
-        this.altText.addEventListener('blur', promptBlurHandler);
-        this.altNegText.addEventListener('blur', promptBlurHandler);
         textPromptAddKeydownHandler(getRequiredElementById('edit_wildcard_contents'));
-        this.initMobileOverlayUi();
+        this.initMobileListUi();
         this.reapplyPositions();
         this.buildConfigArea();
     }

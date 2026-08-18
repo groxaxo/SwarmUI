@@ -1,8 +1,7 @@
 [mcp_servers."swarmui-workflows"]
-command = "node"
-args = ["integrations/workflow-mcp/src/index.js"]
-cwd = "."
-env = { SWARMUI_REPO_ROOT = ".", SWARMUI_MCP_ALLOW_WRITES = "false" }
+command = "bash"
+args = ["-lc", "ROOT=\"$(git rev-parse --show-toplevel)\" && export SWARMUI_REPO_ROOT=\"$ROOT\" && exec node \"$ROOT/integrations/workflow-mcp/src/index.js\""]
+env = { SWARMUI_MCP_ALLOW_WRITES = "false" }
 enabled = true
 required = false
 startup_timeout_sec = 15

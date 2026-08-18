@@ -3,13 +3,12 @@
   "mcpServers": {
     "swarmui-workflows": {
       "type": "stdio",
-      "command": "node",
+      "command": "bash",
       "args": [
-        "integrations/workflow-mcp/src/index.js"
+        "-lc",
+        "ROOT=\"$(git rev-parse --show-toplevel)\" && export SWARMUI_REPO_ROOT=\"$ROOT\" && exec node \"$ROOT/integrations/workflow-mcp/src/index.js\""
       ],
-      "cwd": ".",
       "env": {
-        "SWARMUI_REPO_ROOT": ".",
         "SWARMUI_MCP_ALLOW_WRITES": "false"
       },
       "enabled": true,

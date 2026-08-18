@@ -63,6 +63,10 @@ function timeoutMs() {
   return parsed;
 }
 
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function writesEnabled() {
   return parseBoolean(process.env.SWARMUI_MCP_ALLOW_WRITES);
 }
@@ -76,6 +80,27 @@ export function requireWriteConfirmation(confirm) {
   if (confirm !== true) {
     throw new Error('This write requires confirm=true after reviewing the materialized workflow.');
   }
+}
+
+export function normalizeQueueResponse(response, clientId) {
+  if (!isObject(response)) {
+    throw new Error(`ComfyUI returned an invalid prompt response: ${JSON.stringify(response)}`);
+  }
+  const nodeErrors = isObject(response.node_errors) ? response.node_errors : {};
+  if (Object.keys(nodeErrors).length > 0) {
+    throw new Error(`ComfyUI rejected the workflow with node errors: ${JSON.stringify(nodeErrors)}`);
+  }
+  const promptId = response.prompt_id;
+  if (typeof promptId !== 'string' || !promptId.trim()) {
+    throw new Error(`ComfyUI accepted the HTTP request but returned no prompt_id: ${JSON.stringify(response)}`);
+  }
+  return {
+    client_id: clientId,
+    prompt_id: promptId,
+    number: typeof response.number === 'number' ? response.number : null,
+    node_errors: nodeErrors,
+    response,
+  };
 }
 
 export class ComfyClient {
@@ -161,7 +186,7 @@ export class ComfyClient {
       method: 'POST',
       body: { prompt, client_id: effectiveClientId },
     });
-    return { client_id: effectiveClientId, response };
+    return normalizeQueueResponse(response, effectiveClientId);
   }
 
   async cancelPrompt(promptId, { deleteHistory = true } = {}) {

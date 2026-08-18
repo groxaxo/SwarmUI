@@ -1,0 +1,15 @@
+[mcp_servers."swarmui-workflows"]
+command = "bash"
+args = ["-lc", "ROOT=\"$(git rev-parse --show-toplevel)\" && export SWARMUI_REPO_ROOT=\"$ROOT\" && exec node \"$ROOT/integrations/workflow-mcp/src/index.js\""]
+env = { SWARMUI_MCP_ALLOW_WRITES = "false" }
+enabled = true
+required = false
+startup_timeout_sec = 15
+tool_timeout_sec = 120
+default_tools_approval_mode = "writes"
+
+[mcp_servers."swarmui-workflows".tools.queue_workflow]
+approval_mode = "prompt"
+
+[mcp_servers."swarmui-workflows".tools.cancel_workflow]
+approval_mode = "prompt"

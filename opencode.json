@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "swarmui-workflows": {
+      "type": "local",
+      "command": [
+        "node",
+        "integrations/workflow-mcp/src/index.js"
+      ],
+      "cwd": ".",
+      "environment": {
+        "SWARMUI_REPO_ROOT": ".",
+        "SWARMUI_MCP_ALLOW_WRITES": "false"
+      },
+      "enabled": true,
+      "timeout": 120000
+    }
+  }
+}

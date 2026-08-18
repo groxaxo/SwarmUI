@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "swarmui-workflows": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "ROOT=\"$(git rev-parse --show-toplevel)\" && export SWARMUI_REPO_ROOT=\"$ROOT\" SWARMUI_MCP_ALLOW_WRITES=false && exec node \"$ROOT/integrations/workflow-mcp/src/index.js\""
+      ],
+      "env": {}
+    }
+  }
+}

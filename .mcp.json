@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "swarmui-workflows": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PROJECT_DIR}/integrations/workflow-mcp/src/index.js"
+      ],
+      "env": {
+        "SWARMUI_REPO_ROOT": "${CLAUDE_PROJECT_DIR}",
+        "SWARMUI_MCP_ALLOW_WRITES": "false"
+      }
+    }
+  }
+}

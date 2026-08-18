@@ -1132,6 +1132,22 @@ body.small-window > .tab-content.tab-hundred {
     margin: 0 -1.5rem;
     background-clip: content-box;
 }
+.small-window .model-block,
+.small-window .model-block-small,
+.small-window .model-block-big {
+    width: calc(100% - 0.4rem);
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.small-window .model-descblock {
+    max-width: calc(100% - 7.5rem);
+}
+.small-window .model-block-big .model-descblock {
+    max-width: calc(100% - 14.5rem);
+}
+.small-window .image_editor_newlayer_button {
+    font-size: 11px;
+}
 .browser-header-bar {
     width: calc(100% - 1rem);
     height: 2.5rem;

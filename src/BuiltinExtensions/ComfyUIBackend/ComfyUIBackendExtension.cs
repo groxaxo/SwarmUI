@@ -307,7 +307,9 @@ public class ComfyUIBackendExtension : Extension
         {
             if (!customFlows.Contains($"Examples/{workflow}") && !customFlows.Contains($"Examples/{workflow}.deleted"))
             {
-                File.Copy($"{FilePath}ExampleWorkflows/{workflow}", $"{FilePath}CustomWorkflows/Examples/{workflow}");
+                string dest = $"{FilePath}CustomWorkflows/Examples/{workflow}";
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(dest)!);
+                File.Copy($"{FilePath}ExampleWorkflows/{workflow}", dest);
                 anyCopied = true;
             }
         }

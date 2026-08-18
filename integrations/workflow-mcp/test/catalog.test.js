@@ -11,6 +11,11 @@ async function fixtureRoot() {
   const h3Dir = path.join(root, 'MiniMax H3', 'Story');
   await mkdir(ltxDir, { recursive: true });
   await mkdir(h3Dir, { recursive: true });
+  await writeFile(path.join(root, 'UI Only.json'), JSON.stringify({
+    workflow: { nodes: [], links: [] },
+    prompt: null,
+    description: 'Editable UI graph without an API prompt.',
+  }));
   await writeFile(path.join(ltxDir, 'Core.json'), JSON.stringify({
     workflow: null,
     prompt: {
@@ -35,7 +40,9 @@ test('catalog discovers .json workflows and ignores .json.example descriptors', 
   const root = await fixtureRoot();
   t.after(() => rm(root, { recursive: true, force: true }));
   const catalog = await WorkflowCatalog.load(root);
-  assert.equal(catalog.entries.length, 2);
+  assert.equal(catalog.entries.length, 3);
+  assert.equal(catalog.get('UI Only').queueable, false);
+  assert.deepEqual(catalog.get('UI Only').validationErrors, []);
   assert.equal(catalog.get('LTX 2.5/Core').family, 'ltx-2.5');
   assert.equal(catalog.get('LTX 2.5/Core').readyToQueue, true);
   assert.equal(catalog.get('MiniMax H3/Story/Template').family, 'minimax-h3');

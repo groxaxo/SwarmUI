@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "swarmui-workflows": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "integrations/workflow-mcp/src/index.js"
+      ],
+      "cwd": ".",
+      "env": {
+        "SWARMUI_REPO_ROOT": ".",
+        "SWARMUI_MCP_ALLOW_WRITES": "false"
+      },
+      "enabled": true,
+      "timeout": 120000,
+      "requestIdFormat": "string"
+    }
+  }
+}

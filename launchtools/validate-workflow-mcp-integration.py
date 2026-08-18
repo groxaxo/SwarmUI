@@ -31,6 +31,7 @@ REQUIRED_FILES = [
     ROOT / ".agents" / "skills" / "swarmui-video-workflows" / "SKILL.md",
     ROOT / ".claude" / "skills" / "swarmui-video-workflows" / "SKILL.md",
     ROOT / "docs" / "Features" / "Workflow-MCP.md",
+    ROOT / "launchtools" / "validate-bundled-comfy-workflows.py",
 ]
 
 EXPECTED_TOOLS = {
@@ -88,6 +89,20 @@ def require_read_only_env(entry: dict, env_key: str) -> None:
         fail(f"{env_key} must be an object")
     if env.get("SWARMUI_MCP_ALLOW_WRITES") != "false":
         fail("committed MCP config must set SWARMUI_MCP_ALLOW_WRITES=false")
+
+
+def require_git_root_launcher(entry: dict, label: str) -> None:
+    if entry.get("command") != "bash":
+        fail(f"{label} config must use the guarded Bash launcher")
+    args = entry.get("args")
+    command = " ".join(args) if isinstance(args, list) else ""
+    for marker in (
+        "git rev-parse --show-toplevel",
+        "SWARMUI_REPO_ROOT",
+        "integrations/workflow-mcp/src/index.js",
+    ):
+        if marker not in command:
+            fail(f"{label} launcher is missing: {marker}")
 
 
 def run_checked(command: list[str], cwd: Path) -> None:
@@ -148,12 +163,9 @@ def validate_skills() -> None:
 
 def validate_client_configs() -> None:
     claude = server_entry_from_json(load_json(ROOT / ".mcp.json"), "mcpServers.swarmui-workflows")
-    if claude.get("command") != "bash":
-        fail("Claude Code config must use the guarded Bash launcher")
-    claude_args = claude.get("args")
-    if not isinstance(claude_args, list) or "git rev-parse --show-toplevel" not in " ".join(claude_args):
-        fail("Claude Code config must resolve the Git worktree root")
-    if "SWARMUI_MCP_ALLOW_WRITES=false" not in " ".join(claude_args):
+    require_git_root_launcher(claude, "Claude Code")
+    claude_command = " ".join(claude.get("args", []))
+    if "SWARMUI_MCP_ALLOW_WRITES=false" not in claude_command:
         fail("Claude Code launcher must default writes to false")
 
     opencode = server_entry_from_json(load_json(ROOT / "opencode.json"), "mcp.swarmui-workflows")
@@ -165,10 +177,9 @@ def validate_client_configs() -> None:
     require_read_only_env(opencode, "environment")
 
     omp = server_entry_from_json(load_json(ROOT / ".omp" / "mcp.json"), "mcpServers.swarmui-workflows")
-    if omp.get("type") != "stdio" or omp.get("command") != "node":
-        fail("OMP server must use Node over stdio")
-    if "integrations/workflow-mcp/src/index.js" not in omp.get("args", []):
-        fail("OMP config does not launch the workflow MCP server")
+    if omp.get("type") != "stdio":
+        fail("OMP server must use stdio transport")
+    require_git_root_launcher(omp, "OMP")
     require_read_only_env(omp, "env")
 
     codex_path = ROOT / ".codex" / "config.toml"
@@ -179,10 +190,7 @@ def validate_client_configs() -> None:
     codex_entry = codex.get("mcp_servers", {}).get("swarmui-workflows")
     if not isinstance(codex_entry, dict):
         fail("Codex config is missing mcp_servers.swarmui-workflows")
-    if codex_entry.get("command") != "node":
-        fail("Codex workflow MCP command must be node")
-    if "integrations/workflow-mcp/src/index.js" not in codex_entry.get("args", []):
-        fail("Codex config does not launch the workflow MCP server")
+    require_git_root_launcher(codex_entry, "Codex")
     require_read_only_env(codex_entry, "env")
     if codex_entry.get("default_tools_approval_mode") != "writes":
         fail("Codex config must prompt for write-like MCP tools")
@@ -203,11 +211,12 @@ def validate_server_surface() -> None:
         "prepare-video-workflow",
         "requireWriteConfirmation(confirm)",
         "remoteMissingModels",
-        "loadApiJson",
+        "normalizeQueueResponse",
     ):
-        if required == "loadApiJson":
-            continue
-        if required not in text:
+        if required not in "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (MCP_ROOT / "src").glob("*.js")
+        ):
             fail(f"server is missing required implementation marker: {required}")
     combined = "\n".join(
         path.read_text(encoding="utf-8").lower()
@@ -240,6 +249,7 @@ def main() -> int:
     validate_skills()
     validate_client_configs()
     validate_server_surface()
+    run_checked([sys.executable, "launchtools/validate-bundled-comfy-workflows.py"], ROOT)
     validate_runtime_sources()
     print("PASS: workflow MCP server, LTX 2.5/H3 skill, client configs, syntax, and unit tests validated.")
     return 0

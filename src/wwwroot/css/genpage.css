@@ -2388,16 +2388,24 @@ body.small-window > .tab-content.tab-hundred {
     opacity: 0.75;
 }
 
-/* ===== Mobile Generate-tab overlay layout (small-window only) ===== */
+/* ===== Mobile Generate-tab list layout (small-window only) ===== */
+/* One vertical scrolling list: image -> prompt -> params -> batch -> chip sections.
+   The three layout wrappers are flattened with display:contents so their
+   children become flex items of #Text2Image and can be reordered. */
 .small-window #Text2Image {
     position: relative;
-}
-.small-window #t2i_top_bar {
-    position: relative;
-    width: 100%;
-    max-width: 100%;
-    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
     white-space: normal;
+}
+.small-window .t2i-top-bar-container,
+.small-window #t2i_top_bar,
+.small-window #main_image_area {
+    display: contents;
 }
 .small-window .t2i-area-quicktools {
     position: fixed !important;
@@ -2409,94 +2417,123 @@ body.small-window > .tab-content.tab-hundred {
 .small-window #t2i-mid-split-bar {
     display: none !important;
 }
-.small-window #main_image_area {
-    width: 100% !important;
-    max-width: 100%;
-    margin: 0;
-    padding: 0;
-    overflow: visible;
-    white-space: normal;
-}
-.small-window #current_image_wrapbox,
-.small-window #current_image {
-    max-width: 100%;
-}
-.small-window #input_sidebar,
-.small-window #current_image_batch_wrapper {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 100% !important;
-    height: auto !important;
-    z-index: 25;
-    display: block !important;
-    background: var(--background);
-    overflow: hidden;
-    box-shadow: 0 0 1.25rem color-mix(in srgb, transparent 55%, var(--text));
-    transition: transform 0.28s ease-out;
-    pointer-events: none;
-}
-.small-window #input_sidebar {
-    transform: translateX(-105%);
-}
-.small-window #current_image_batch_wrapper {
-    transform: translateX(105%);
-}
-.small-window.mobile-panel-left-open #input_sidebar {
-    transform: none;
-    pointer-events: auto;
-}
-.small-window.mobile-panel-right-open #current_image_batch_wrapper {
-    transform: none;
-    pointer-events: auto;
-}
-.small-window #alt_prompt_region {
-    position: absolute !important;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    top: auto !important;
-    width: 100% !important;
-    max-width: 100%;
-    z-index: 15;
-    padding: 0.4rem 0.5rem 0.35rem 0.5rem;
-    box-sizing: border-box;
-    background: color-mix(in srgb, var(--background) 92%, transparent);
-    border-top: 1px solid var(--light-border);
-}
-.small-window.mobile-keyboard-pin #alt_prompt_region {
-    position: fixed !important;
-    bottom: var(--mobile-keyboard-inset, 0px) !important;
-    left: 0;
-    right: 0;
-    z-index: 45;
-}
-.small-window.mobile-keyboard-open #t2i_bottom_bar {
-    display: none !important;
-}
-.small-window.mobile-keyboard-open .mobile-edge-hint {
-    display: none !important;
-}
-.small-window.mobile-panel-bottom-open #alt_prompt_region {
-    visibility: hidden;
-}
-.small-window #t2i_bottom_bar {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
+/* List slot 1: current image */
+.small-window #current_image_wrapbox {
+    order: 1;
+    display: block;
     width: 100%;
     max-width: 100%;
-    z-index: 32;
+    height: 40vh;
+    min-height: 12rem;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+/* List slot 2: prompt */
+.small-window #alt_prompt_region {
+    order: 2;
+    position: static;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 0.4rem 0.5rem 0.35rem 0.5rem;
     background: var(--background);
-    display: flex;
-    flex-direction: column;
+    border-top: 1px solid var(--light-border);
+    border-bottom: 1px solid var(--light-border);
+}
+/* List slot 3: params */
+.small-window #input_sidebar {
+    order: 3;
+    display: block;
+    width: 100% !important;
+    max-width: 100%;
+    height: auto !important;
+    box-sizing: border-box;
+    padding-bottom: 1rem;
+}
+.small-window .main_inputs_area_wrapper {
+    height: auto;
+    max-height: none;
     overflow: visible;
 }
-.small-window.mobile-panel-bottom-open #t2i_bottom_bar {
-    box-shadow: 0 -0.5rem 1.25rem color-mix(in srgb, transparent 70%, var(--text));
+.small-window #input_sidebar .tab-content,
+.small-window #input_sidebar .tab-pane {
+    height: auto !important;
+}
+/* List slot 4: batch */
+.small-window #current_image_batch_wrapper {
+    order: 4;
+    display: block;
+    width: 100% !important;
+    max-width: 100%;
+    height: auto !important;
+    box-sizing: border-box;
+    white-space: normal;
+}
+.small-window #current_image_batch_wrapper .tab-content,
+.small-window #current_image_batch_wrapper .tab-pane {
+    height: auto !important;
+}
+.small-window #current_image_batch {
+    width: 100%;
+    height: auto;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+/* List slot 5: info bar + chip sections */
+.small-window #t2i_bottom_bar {
+    order: 5;
+    position: static;
+    width: 100%;
+    max-width: 100%;
+    height: auto !important;
+    box-sizing: border-box;
+    display: block;
+    overflow: visible;
+    background: var(--background);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.small-window #t2i_bottom_bar .tab-content {
+    width: 100%;
+    height: auto !important;
+    overflow: visible;
+}
+.small-window #bottom_info_bar {
+    max-width: 100%;
+    flex-wrap: wrap;
+}
+/* Chip bars for every sub-tab collection (bottom sections + sidebars) */
+.small-window .swarm-gen-tab-subnav {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    padding: 0.25rem 0.5rem;
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+}
+.small-window .swarm-gen-tab-subnav .nav-item {
+    flex: 0 0 auto;
+    float: none;
+}
+.small-window .swarm-gen-tab-subnav .nav-link {
+    white-space: nowrap;
+    border-radius: 1rem;
+    padding: 0.15rem 0.7rem;
+    font-size: 0.9rem;
+}
+.small-window #bottombartabcollection {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    background: var(--background);
+}
+.small-window .browser-header-buttons {
+    flex-wrap: wrap;
 }
 .small-window.modal-open #t2i_bottom_bar {
     z-index: 2000;
@@ -2505,9 +2542,6 @@ body.small-window > .tab-content.tab-hundred {
 .small-window.modal-open #bottombartabcollection {
     visibility: hidden;
     pointer-events: none;
-}
-.small-window:not(.mobile-panel-bottom-open) #t2i_bottom_bar_content > .tab-pane {
-    display: none !important;
 }
 .small-window #image_fullview_modal_content {
     width: 100% !important;
@@ -2540,91 +2574,6 @@ body.small-window > .tab-content.tab-hundred {
     padding-bottom: 0.5rem;
     box-sizing: border-box;
 }
-.small-window #bottom_info_bar {
-    flex: 0 0 auto;
-    max-width: 100%;
-}
-.small-window #t2i_bottom_bar .tab-content {
-    flex: 1 1 auto;
-    height: auto !important;
-    min-height: 0;
-    overflow: auto;
-}
-.small-window #bottombartabcollection {
-    flex: 0 0 auto;
-    overflow-x: auto;
-    overflow-y: hidden;
-    white-space: nowrap;
-    max-width: 100%;
-    flex-wrap: nowrap !important;
-    display: flex;
-}
-.small-window #bottombartabcollection .nav-item {
-    flex: 0 0 auto;
-    float: none;
-}
-.small-window .mobile-layout-scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 24;
-    background: color-mix(in srgb, #000 45%, transparent);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.28s ease-out;
-}
-.small-window.mobile-panel-left-open .mobile-layout-scrim,
-.small-window.mobile-panel-right-open .mobile-layout-scrim,
-.small-window.mobile-panel-bottom-open .mobile-layout-scrim {
-    opacity: 1;
-    pointer-events: auto;
-}
-.small-window.mobile-panel-bottom-open .mobile-layout-scrim {
-    z-index: 31;
-}
-.small-window .mobile-edge-hint {
-    position: fixed;
-    z-index: 23;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    color: color-mix(in srgb, var(--text) 70%, transparent);
-    background: color-mix(in srgb, var(--background-soft) 80%, transparent);
-    border: 1px solid var(--light-border);
-    cursor: pointer;
-    user-select: none;
-    -webkit-user-select: none;
-    opacity: 0.55;
-    transition: opacity 0.2s ease-out;
-}
-.small-window .mobile-edge-hint:hover,
-.small-window .mobile-edge-hint:active {
-    opacity: 0.95;
-}
-.small-window.mobile-panels-all-shut .mobile-edge-hint-left,
-.small-window.mobile-panels-all-shut .mobile-edge-hint-right {
-    display: flex;
-}
-.small-window .mobile-edge-hint-left,
-.small-window .mobile-edge-hint-right {
-    top: 45%;
-    width: 1.15rem;
-    height: 3.25rem;
-    border-radius: 0.4rem;
-    font-size: 1.4rem;
-    line-height: 1;
-}
-.small-window .mobile-edge-hint-left {
-    left: 0.15rem;
-}
-.small-window .mobile-edge-hint-right {
-    right: 0.15rem;
-}
-.small-window.mobile-panel-dragging #input_sidebar,
-.small-window.mobile-panel-dragging #current_image_batch_wrapper,
-.small-window.mobile-panel-dragging #t2i_bottom_bar,
-.small-window.mobile-panel-dragging .mobile-layout-scrim {
-    transition: none !important;
-}
 .small-window .settings_submit_confirmer {
     height: auto;
     font-size: 130%;
@@ -2633,13 +2582,4 @@ body.small-window > .tab-content.tab-hundred {
 }
 .small-window .settings_submit_confirmer .settings_submit_confirmer_text {
     display: block;
-}
-@media (prefers-reduced-motion: reduce) {
-    .small-window #input_sidebar,
-    .small-window #current_image_batch_wrapper,
-    .small-window #t2i_bottom_bar,
-    .small-window .mobile-layout-scrim,
-    .small-window .mobile-edge-hint {
-        transition: none !important;
-    }
 }
